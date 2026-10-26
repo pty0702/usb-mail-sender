@@ -1,0 +1,103 @@
+# Created using wingetcreate 1.2.5.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.4.0.schema.json
+
+PackageIdentifier: MailGrid.MailGrid
+PackageVersion: 1.0.0
+PackageLocale: en-US
+Publisher: MailGrid
+PublisherUrl: https://github.com/bravo1goingdark/mailgrid
+PublisherSupportUrl: https://github.com/bravo1goingdark/mailgrid/issues
+Author: bravo1goingdark
+PackageName: MailGrid
+PackageUrl: https://github.com/bravo1goingdark/mailgrid
+License: Apache-2.0
+LicenseUrl: https://github.com/bravo1goingdark/mailgrid/blob/main/LICENSE
+Copyright: Copyright (c) 2024 MailGrid
+CopyrightUrl: https://github.com/bravo1goingdark/mailgrid/blob/main/LICENSE
+ShortDescription: Production-ready CLI email orchestrator with templating, scheduling, and high-performance bulk sending
+Description: |-
+  MailGrid is a comprehensive command-line email orchestration tool designed for developers, 
+  system administrators, and businesses who need reliable, efficient email automation. 
+  
+  Key Features:
+  • Single & bulk email sending with CSV/Google Sheets support
+  • Advanced HTML templating with Go templates
+  • Flexible scheduling with cron expressions and one-time scheduling
+  • High-performance concurrent sending with built-in rate limiting
+  • Comprehensive recipient filtering and validation
+  • Email preview server for template testing
+  • Retry logic with exponential backoff
+  • Database persistence with BoltDB
+  • Cross-platform support (Windows, Linux, macOS, FreeBSD)
+  • Docker support with multi-architecture builds
+  • Minimal memory footprint (~50MB) with optimized binaries
+  
+  Perfect for:
+  • Automated system notifications
+  • Marketing campaign management
+  • Transactional email sending
+  • Newsletter distribution
+  • Scheduled report delivery
+  • CI/CD pipeline notifications
+
+Moniker: mailgrid
+Tags:
+- cli
+- email
+- smtp
+- automation
+- scheduling
+- templating
+- bulk-email
+- newsletter
+- notifications
+- go
+- cross-platform
+ReleaseNotes: |-
+  MailGrid v1.0.0 - Production Ready Release
+  
+  New Features:
+  • Complete email orchestration system
+  • Advanced scheduling with cron support
+  • High-performance bulk sending
+  • HTML templating with Go templates
+  • CSV and Google Sheets integration
+  • Email preview server
+  • Comprehensive filtering system
+  
+  Improvements:
+  • Optimized binaries (3.5-4.5MB)
+  • Enhanced error handling and logging
+  • Improved SMTP connection pooling
+  • Better memory management
+  • Cross-platform compatibility
+  
+  Bug Fixes:
+  • Fixed concurrent sending race conditions
+  • Resolved template parsing edge cases
+  • Improved database transaction handling
+ReleaseNotesUrl: https://github.com/bravo1goingdark/mailgrid/releases/tag/v1.0.0
+InstallationNotes: |-
+  After installation, create a config.json file with your SMTP settings:
+  {
+    "smtp": {
+      "host": "smtp.gmail.com",
+      "port": 587,
+      "username": "your-email@gmail.com", 
+      "password": "your-app-password",
+      "from_email": "your-email@gmail.com",
+      "from_name": "Your Name",
+      "use_tls": true
+    }
+  }
+  
+  Test with: mailgrid --to test@example.com --subject "Test" --text "Hello!" --env config.json
+Documentations:
+- DocumentLabel: Getting Started Guide
+  DocumentUrl: https://github.com/bravo1goingdark/mailgrid/blob/main/README.md
+- DocumentLabel: Installation Guide
+  DocumentUrl: https://github.com/bravo1goingdark/mailgrid/blob/main/INSTALLATION.md
+- DocumentLabel: CLI Reference
+  DocumentUrl: https://github.com/bravo1goingdark/mailgrid/blob/main/docs/CLI_REFERENCE.md
+ManifestType: defaultLocale
+ManifestVersion: 1.4.0

@@ -1,0 +1,65 @@
+# Binaries
+/mailgrid
+*.exe
+*.out
+*.dll
+*.so
+*.dylib
+
+# Build artifacts
+*.log
+*.test
+*.prof
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE/editor configs
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+
+# Dependency directories (if using vendoring)
+vendor/
+
+# Go Modules (don't ignore go.sum)
+go.work
+go.work.sum
+
+# Configs and secrets
+.env
+*.key
+*.pem
+
+# Coverage files
+coverage.*
+*.coverprofile
+*.cov
+
+# Logs
+logs/
+
+# Backup files
+*~
+
+# Test cache
+/tmp/
+
+# Local runtime artifacts
+mailgrid.db
+success.csv
+failed.csv
+
+# Test data files
+*test*.csv
+*test*.txt
+*test*.html
+large_test_recipients.csv
+
+# Local development files
+.claude/
+CLAUDE.md
+.recon/

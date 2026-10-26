@@ -1,0 +1,11 @@
+# 上游源码目录的编译产物（交付副本在 U盘目录/）
+mailgrid/mailgrid.exe
+
+# 运行时生成
+*.db
+*.offset
+failed.csv
+sent.csv
+
+# 日志
+*.log
