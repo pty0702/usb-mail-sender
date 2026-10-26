@@ -16,6 +16,7 @@ type CLIArgs struct {
 	SheetURL    string   `json:"sheet_url,omitempty"`
 	Attachments []string `json:"attachments,omitempty"`
 	Embeds      []string `json:"embeds,omitempty"`
+	Signature   string   `json:"signature,omitempty"`
 	Cc          string   `json:"cc,omitempty"`
 	Bcc         string   `json:"bcc,omitempty"`
 	Concurrency int      `json:"concurrency,omitempty"`

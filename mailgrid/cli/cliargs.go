@@ -21,6 +21,7 @@ type CLIArgs struct {
 	Filter        string   // Logical filter expression for recipients
 	Attachments   []string // File paths to attach to every email
 	Embeds        []string // File paths to embed inline (cid:embedN) in every email
+	SignaturePath string   // Path to a plain-text signature file appended to the HTML body footer
 	Cc            string   // Comma-separated emails or file path for CC
 	Bcc           string   // Comma-separated emails or file path for BCC
 	To            string   // Email address for one-off sending
@@ -81,6 +82,7 @@ func printHelp() {
 	fmt.Println("  -a, --attach           strings  File attachments (repeat flag to add multiple)")
 	fmt.Println("      --embed            strings  Inline image paths shown in the HTML body (repeat flag to add multiple);")
 	fmt.Println("                                  reference them in the template as <img src=\"cid:embed1\">")
+	fmt.Println("      --signature        string   Plain-text signature file appended below the email body")
 	fmt.Println("      --cc               string   Comma-separated emails or file path for CC")
 	fmt.Println("      --bcc              string   Comma-separated emails or file path for BCC")
 	fmt.Println()
@@ -154,6 +156,7 @@ func ParseFlags() CLIArgs {
 	pflag.StringVarP(&args.Filter, "filter", "F", "", "Logical filter for recipients")
 	pflag.StringSliceVarP(&args.Attachments, "attach", "a", []string{}, "File attachments (repeat flag to add multiple)")
 	pflag.StringSliceVar(&args.Embeds, "embed", []string{}, "Inline image paths shown in the HTML body (repeat flag to add multiple); reference as cid:embed1, cid:embed2, ...")
+	pflag.StringVar(&args.SignaturePath, "signature", "", "Plain-text signature file appended below the email body (auto-detects UTF-8/GBK)")
 	pflag.StringVar(&args.To, "to", "", "Email address for single-recipient sending (mutually exclusive with --csv or --sheet-url)")
 	pflag.StringVar(&args.Text, "text", "", "Inline plain-text body or path to a .txt file (mutually exclusive with --template)")
 	pflag.StringVarP(&args.WebhookURL, "webhook", "w", "", "HTTP URL to send POST request with campaign results")

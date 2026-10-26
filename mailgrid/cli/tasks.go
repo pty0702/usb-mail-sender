@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"text/template"
 	"time"
 
@@ -23,7 +24,7 @@ import (
 // plainText is optional plain-text content (inline string or file path resolved
 // by the caller). When both templatePath (HTML) and plainText are provided, the
 // task carries both bodies so the sender can build a multipart/alternative message.
-func PrepareEmailTasks(recipients []parser.Recipient, templatePath, plainText, subjectTpl string, attachments, embeds []string, ccList []string, bccList []string) ([]email.Task, error) {
+func PrepareEmailTasks(recipients []parser.Recipient, templatePath, plainText, subjectTpl, signatureHTML string, attachments, embeds []string, ccList []string, bccList []string) ([]email.Task, error) {
 	tmpl, err := template.New("subject").Option("missingkey=error").Parse(subjectTpl)
 	if err != nil {
 		return nil, fmt.Errorf("invalid subject template: %w", err)
@@ -48,6 +49,7 @@ func PrepareEmailTasks(recipients []parser.Recipient, templatePath, plainText, s
 				continue
 			}
 		}
+		body += signatureHTML
 
 		var sb bytes.Buffer
 		if err := tmpl.Execute(&sb, r.Data); err != nil {
@@ -63,7 +65,7 @@ func PrepareEmailTasks(recipients []parser.Recipient, templatePath, plainText, s
 			PlainText:   plainText,
 			Attachments: attachments,
 			Embeds:      embeds,
-			CC:          ccList,
+			CC:          recipientCC(r, ccList),
 			BCC:         bccList,
 			Retries:     0,
 			// Index is the position in the post-skip task list. This keeps
@@ -94,7 +96,7 @@ func PrepareEmailTasks(recipients []parser.Recipient, templatePath, plainText, s
 // after the skip, matching the offset baseline so MarkComplete advances the
 // tracker correctly. Recipients that fail to render (missing fields, template
 // error) are logged, skipped, and never count toward skipN or Index.
-func StreamEmailTasks(ctx context.Context, recipients []parser.Recipient, templatePath, plainText, subjectTpl string, attachments, embeds []string, ccList []string, bccList []string, skipN, bufSize int) (<-chan email.Task, <-chan error) {
+func StreamEmailTasks(ctx context.Context, recipients []parser.Recipient, templatePath, plainText, subjectTpl, signatureHTML string, attachments, embeds []string, ccList []string, bccList []string, skipN, bufSize int) (<-chan email.Task, <-chan error) {
 	if bufSize <= 0 {
 		bufSize = 64
 	}
@@ -136,6 +138,7 @@ func StreamEmailTasks(ctx context.Context, recipients []parser.Recipient, templa
 					continue
 				}
 			}
+			body += signatureHTML
 
 			var sb bytes.Buffer
 			if rerr := tmpl.Execute(&sb, r.Data); rerr != nil {
@@ -156,7 +159,7 @@ func StreamEmailTasks(ctx context.Context, recipients []parser.Recipient, templa
 				PlainText:   plainText,
 				Attachments: attachments,
 				Embeds:      embeds,
-				CC:          ccList,
+				CC:          recipientCC(r, ccList),
 				BCC:         bccList,
 				Retries:     0,
 				Index:       processed,
@@ -183,6 +186,26 @@ func StreamEmailTasks(ctx context.Context, recipients []parser.Recipient, templa
 // the email field is required.
 func HasMissingFields(r parser.Recipient) bool {
 	return r.Email == ""
+}
+
+// recipientCC merges the global --cc list with the recipient's own "cc" CSV
+// column. The column may hold one address or several separated by commas.
+// SendWithClient deduplicates addresses case-insensitively, so a per-recipient
+// address that repeats the global list is harmless.
+func recipientCC(r parser.Recipient, globalCC []string) []string {
+	merged := make([]string, 0, len(globalCC)+1)
+	merged = append(merged, globalCC...)
+	if perRow := strings.TrimSpace(r.Data["cc"]); perRow != "" {
+		for _, addr := range strings.Split(perRow, ",") {
+			if addr = strings.TrimSpace(addr); addr != "" {
+				merged = append(merged, addr)
+			}
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 // printDryRun logs rendered email content to the console instead of sending.
@@ -244,11 +267,21 @@ func SendSingleEmail(args CLIArgs, cfg config.SMTPConfig) error {
 	ccList := utils.SplitAndTrim(args.Cc)
 	bccList := utils.SplitAndTrim(args.Bcc)
 
+	var signatureHTML string
+	if args.SignaturePath != "" {
+		sigText, serr := utils.ReadSignatureFile(args.SignaturePath)
+		if serr != nil {
+			return fmt.Errorf("failed to read signature file: %w", serr)
+		}
+		signatureHTML = utils.SignatureToHTML(sigText)
+	}
+
 	tasks, err := PrepareEmailTasks(
 		[]parser.Recipient{recipient},
 		args.TemplatePath,
 		plainText,
 		args.Subject,
+		signatureHTML,
 		args.Attachments,
 		args.Embeds,
 		ccList,

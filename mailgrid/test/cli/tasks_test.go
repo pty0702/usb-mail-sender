@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"reflect"
 	"io"
 	"os"
 	"strings"
@@ -57,7 +58,7 @@ func TestPrepareEmailTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tasks, err := cli.PrepareEmailTasks(recipients, tmp.Name(), "", "Hello {{.name }}", []string{a.Name()}, []string{}, []string{}, []string{})
+	tasks, err := cli.PrepareEmailTasks(recipients, tmp.Name(), "", "Hello {{.name }}", "", []string{a.Name()}, []string{}, []string{}, []string{})
 	if err != nil {
 		t.Fatalf("prepareEmailTasks error: %v", err)
 	}
@@ -86,7 +87,7 @@ func TestPrepareEmailTasks_AttachOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tasks, err := cli.PrepareEmailTasks(recipients, "", "", "Hi", []string{a.Name()}, []string{}, []string{}, []string{})
+	tasks, err := cli.PrepareEmailTasks(recipients, "", "", "Hi", "", []string{a.Name()}, []string{}, []string{}, []string{})
 	if err != nil {
 		t.Fatalf("prepareEmailTasks error: %v", err)
 	}
@@ -108,6 +109,7 @@ func TestPrepareEmailTasks_CC_BCC(t *testing.T) {
 		"",
 		"",
 		"Test Subject",
+		"",
 		[]string{},
 		[]string{},
 		[]string{"cc1@example.com"},
@@ -235,4 +237,45 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 
 	return string(output)
+}
+
+func TestPrepareEmailTasks_SignatureAndPerRowCC(t *testing.T) {
+	recipients := []parser.Recipient{
+		{Email: "a@example.com", Data: map[string]string{"name": "A", "cc": "boss@example.com, hr@example.com"}},
+		{Email: "b@example.com", Data: map[string]string{"name": "B"}},
+	}
+
+	tasks, err := cli.PrepareEmailTasks(
+		recipients,
+		"",
+		"",
+		"Subject",
+		"<div>SIG-FOOTER</div>",
+		nil,
+		nil,
+		[]string{"global@example.com"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PrepareEmailTasks error: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(tasks))
+	}
+
+	// Signature HTML is appended to every rendered body.
+	if tasks[0].Body == "" || !strings.Contains(tasks[0].Body, "SIG-FOOTER") {
+		t.Errorf("expected signature appended to body, got %q", tasks[0].Body)
+	}
+
+	// Per-row CC column merges with the global CC list.
+	want := []string{"global@example.com", "boss@example.com", "hr@example.com"}
+	if !reflect.DeepEqual(tasks[0].CC, want) {
+		t.Errorf("task0 CC = %v, want %v", tasks[0].CC, want)
+	}
+
+	// Rows without a cc column keep only the global CC.
+	if !reflect.DeepEqual(tasks[1].CC, []string{"global@example.com"}) {
+		t.Errorf("task1 CC = %v, want [global@example.com]", tasks[1].CC)
+	}
 }

@@ -104,6 +104,7 @@ func Run(args CLIArgs) error {
 					Text:         a.Text,
 					Attachments:  a.Attachments,
 					Embeds:       a.Embeds,
+					SignaturePath: a.Signature,
 					Cc:           a.Cc,
 					Bcc:          a.Bcc,
 					RetryLimit:   a.RetryLimit,
@@ -112,19 +113,20 @@ func Run(args CLIArgs) error {
 			} else {
 				// Bulk email
 				cliArgs := CLIArgs{
-					EnvPath:      a.EnvPath,
-					CSVPath:      a.CSVPath,
-					SheetURL:     a.SheetURL,
-					TemplatePath: a.Template,
-					Subject:      a.Subject,
-					Attachments:  a.Attachments,
-					Embeds:       a.Embeds,
-					Cc:           a.Cc,
-					Bcc:          a.Bcc,
-					Concurrency:  a.Concurrency,
-					RetryLimit:   a.RetryLimit,
-					BatchSize:    a.BatchSize,
-					Filter:       a.Filter,
+					EnvPath:       a.EnvPath,
+					CSVPath:       a.CSVPath,
+					SheetURL:      a.SheetURL,
+					TemplatePath:  a.Template,
+					Subject:       a.Subject,
+					Attachments:   a.Attachments,
+					Embeds:        a.Embeds,
+					SignaturePath: a.Signature,
+					Cc:            a.Cc,
+					Bcc:           a.Bcc,
+					Concurrency:   a.Concurrency,
+					RetryLimit:    a.RetryLimit,
+					BatchSize:     a.BatchSize,
+					Filter:        a.Filter,
 				}
 				return Run(cliArgs)
 			}
@@ -156,6 +158,7 @@ func Run(args CLIArgs) error {
 			SheetURL:    args.SheetURL,
 			Attachments: args.Attachments,
 			Embeds:      args.Embeds,
+			Signature:   args.SignaturePath,
 			Cc:          args.Cc,
 			Bcc:         args.Bcc,
 			Concurrency: args.Concurrency,
@@ -261,6 +264,16 @@ func Run(args CLIArgs) error {
 
 	if args.TemplatePath == "" && args.Text == "" && len(args.Attachments) == 0 && len(args.Embeds) == 0 {
 		return fmt.Errorf("provide --template, --text, --attach, or --embed (at least one is required)")
+	}
+
+	// Load the optional signature file and render it to an HTML footer block.
+	var signatureHTML string
+	if args.SignaturePath != "" {
+		sigText, err := utils.ReadSignatureFile(args.SignaturePath)
+		if err != nil {
+			return fmt.Errorf("failed to read signature file: %w", err)
+		}
+		signatureHTML = utils.SignatureToHTML(sigText)
 	}
 
 	// Validate webhook URL if provided
@@ -397,7 +410,7 @@ func Run(args CLIArgs) error {
 	// Dry-run uses the slice path because printDryRun consumes a slice and
 	// dry-run has no scaling concern.
 	if args.DryRun {
-		tasks, err := PrepareEmailTasks(recipients, args.TemplatePath, plainText, args.Subject, args.Attachments, args.Embeds, ccList, bccList)
+		tasks, err := PrepareEmailTasks(recipients, args.TemplatePath, plainText, args.Subject, signatureHTML, args.Attachments, args.Embeds, ccList, bccList)
 		if err != nil {
 			return err
 		}
@@ -457,7 +470,7 @@ func Run(args CLIArgs) error {
 	// Stream rendered tasks into a single attachment cache shared across the
 	// dispatch run so each unique attachment is base64-encoded exactly once.
 	cache := email.NewAttachmentCache(0)
-	taskCh, _ := StreamEmailTasks(ctx, recipients, args.TemplatePath, plainText, args.Subject, args.Attachments, args.Embeds, ccList, bccList, startOffset, args.Concurrency*args.BatchSize)
+	taskCh, _ := StreamEmailTasks(ctx, recipients, args.TemplatePath, plainText, args.Subject, signatureHTML, args.Attachments, args.Embeds, ccList, bccList, startOffset, args.Concurrency*args.BatchSize)
 
 	opts := &email.DispatchOptions{
 		Context:         ctx,
