@@ -56,7 +56,7 @@ namespace MailSenderGui
             subjectBox = new TextBox { Width = 180, Text = "TEST 2026" };
             cfg.Controls.Add(subjectBox);
             cfg.Controls.Add(new Label { Text = "  每封固定抄送：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
-            ccBox = new TextBox { Width = 330, Text = "sue.s@pak-eco.com,1430404507@qq.com" };
+            ccBox = new TextBox { Width = 330, Text = "sue@pak-eco.com,1430404507@qq.com" };
             cfg.Controls.Add(ccBox);
 
             var buttons = new FlowLayoutPanel

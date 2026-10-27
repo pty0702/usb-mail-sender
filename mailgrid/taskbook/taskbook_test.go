@@ -40,7 +40,7 @@ func TestWriteTemplateAndParse(t *testing.T) {
 	}
 	want := TaskRow{
 		Time: "08:00", Name: "David Lee", Email: "david.lee@example.com",
-		CC: "sue.s@pak-eco.com", RowNum: 3,
+		CC: "sue@pak-eco.com", RowNum: 3,
 	}
 	got := tasks[0]
 	if got.Time != want.Time || got.Name != want.Name || got.Email != want.Email ||

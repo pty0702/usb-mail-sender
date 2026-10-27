@@ -175,7 +175,7 @@ func WriteTemplate(path string) error {
 	}
 
 	examples := [][]string{
-		{"08:00", "David Lee", "david.lee@example.com", "sue.s@pak-eco.com",
+		{"08:00", "David Lee", "david.lee@example.com", "sue@pak-eco.com",
 			"PACK EXPO 2026 is coming — and we'd love to see you there!\n\nJoin Pak2Eco in Chicago and explore our latest paper packaging solutions, including Retail Packaging, Food Packaging, E-commerce Packaging, Custom Packaging, and New Insulated Bags.\n\nOct. 18–21, 2026 · McCormick Place, Chicago, IL · West Hall, Booth W-46076", "poster.jpg"},
 		{"08:00", "Sarah Chen", "sarah.chen@example.com", "",
 			"PACK EXPO 2026 is coming — see you in Chicago!", "poster.jpg"},
