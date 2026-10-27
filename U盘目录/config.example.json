@@ -1,0 +1,10 @@
+{
+  "smtp": {
+    "host": "smtp.exmail.qq.com",
+    "port": 465,
+    "ssl": true,
+    "username": "你的发件邮箱@公司域名.com",
+    "password": "在这里填客户端专用密码",
+    "from": "你的发件邮箱@公司域名.com"
+  }
+}
