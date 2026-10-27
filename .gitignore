@@ -1,19 +1,20 @@
-# 上游源码目录的编译产物（交付副本在 U盘目录/）
-mailgrid/mailgrid.exe
 
+# 上游源码目录的编译产物（交付副本在 U盘目录/）
+# 企业微信程序目录（不属于本项目）
+# 含真实授权码的文件，禁止进 git（公开仓库）
+# 日志
 # 运行时生成
 *.db
-*.offset
-failed.csv
-sent.csv
-
-# 日志
 *.log
-
-# 含真实授权码的文件，禁止进 git（公开仓库）
-U盘目录/config.json
-邮件发送工具.zip
-
-# 企业微信程序目录（不属于本项目）
-WXWork/
+*.offset
+HANDOFF.md
+U盘目录/smtp.json
+U盘目录/success.csv
 U盘目录/任务表.state.json
+U盘目录/卡密.txt
+WXWork/
+failed.csv
+mailgrid/mailgrid.exe
+sent.csv
+邮件发送工具.zip
+邮件定时发送器_by_西塔_v1.0.zip
