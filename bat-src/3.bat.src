@@ -1,8 +1,0 @@
-@echo off
-title 预览邮件渲染效果（不实际发送）
-cd /d "%~dp0"
-mailgrid.exe --env config.json --csv recipients.csv --template template.html --embed poster.jpg,logo.png,badge.gif --signature 签名.txt --subject "TEST 2026" --cc "sue.s@pak-eco.com,1430404507@qq.com" --dry-run
-echo.
-echo 以上为每封邮件的渲染结果（未实际发送）。
-echo Embeds 一行应显示三张图（海报/签名logo/徽章）。
-pause
