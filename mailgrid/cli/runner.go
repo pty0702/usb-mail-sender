@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/bravo1goingdark/mailgrid/offset"
 	"github.com/bravo1goingdark/mailgrid/parser"
 	"github.com/bravo1goingdark/mailgrid/scheduler"
+	"github.com/bravo1goingdark/mailgrid/taskbook"
 	"github.com/bravo1goingdark/mailgrid/utils"
 	"github.com/bravo1goingdark/mailgrid/webhook"
 )
@@ -197,6 +199,15 @@ func Run(args CLIArgs) error {
 		// registered job would never run.
 		return manager.RunDaemon()
 	}
+	// Task-table template generation needs no SMTP config.
+	if args.TaskbookTemplate != "" {
+		if err := taskbook.WriteTemplate(args.TaskbookTemplate); err != nil {
+			return err
+		}
+		fmt.Printf("范本已生成: %s（用 Excel/WPS 打开填写即可）\n", args.TaskbookTemplate)
+		return nil
+	}
+
 	if args.EnvPath == "" {
 		return fmt.Errorf("SMTP config required: set --env path/to/config.json")
 	}
@@ -211,6 +222,31 @@ func Run(args CLIArgs) error {
 	// Wire configurable SMTP dial timeout.
 	if args.SMTPTimeout > 0 {
 		cfg.SMTP.DialTimeout = time.Duration(args.SMTPTimeout) * time.Second
+	}
+
+	// Task-table scheduling mode: parse the spreadsheet, deliver due groups.
+	if args.TaskbookPath != "" {
+		if args.TemplatePath == "" {
+			return fmt.Errorf("task-table mode requires --template (the base HTML template with the signature block)")
+		}
+		ccList, err := utils.ParseAddressInput(args.Cc)
+		if err != nil {
+			return fmt.Errorf("failed to parse CC: %w", err)
+		}
+		var fixedEmbeds []string
+		for _, img := range []string{"logo.png", "badge.gif"} {
+			if abs, err := filepath.Abs(img); err == nil {
+				if _, err := os.Stat(abs); err == nil {
+					fixedEmbeds = append(fixedEmbeds, abs)
+				}
+			}
+		}
+		sched := taskbook.NewScheduler(args.TaskbookPath, args.TemplatePath, args.Subject, ccList, fixedEmbeds, cfg.SMTP)
+		if args.TaskbookOnce != "" {
+			return sched.RunBatch(args.TaskbookOnce)
+		}
+		fmt.Printf("任务表调度模式启动: %s\n模板: %s\n按 Ctrl+C 或关闭窗口停止。\n", args.TaskbookPath, args.TemplatePath)
+		return sched.Run(ctx)
 	}
 	if args.Concurrency < 1 {
 		return fmt.Errorf("--concurrency must be at least 1")

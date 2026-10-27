@@ -22,6 +22,11 @@ type CLIArgs struct {
 	Attachments   []string // File paths to attach to every email
 	Embeds        []string // File paths to embed inline (cid:embedN) in every email
 	SignaturePath string   // Path to a plain-text signature file appended to the HTML body footer
+
+	// Task-table mode (任务表): Excel-driven scheduling.
+	TaskbookPath     string // Path to 任务表.xlsx; enables the scheduler loop
+	TaskbookTemplate string // Generate a blank task-table template at this path and exit
+	TaskbookOnce     string // Send only the batch for this HH:MM and exit
 	Cc            string   // Comma-separated emails or file path for CC
 	Bcc           string   // Comma-separated emails or file path for BCC
 	To            string   // Email address for one-off sending
@@ -83,6 +88,9 @@ func printHelp() {
 	fmt.Println("      --embed            strings  Inline image paths shown in the HTML body (repeat flag to add multiple);")
 	fmt.Println("                                  reference them in the template as <img src=\"cid:embed1\">")
 	fmt.Println("      --signature        string   Plain-text signature file appended below the email body")
+	fmt.Println("      --taskbook         string   Excel task table (任务表.xlsx): schedule groups by their 时间 column")
+	fmt.Println("      --taskbook-template string  Generate a fillable task-table template at this path and exit")
+	fmt.Println("      --taskbook-once    string   Send only the batch for this HH:MM from the task table and exit")
 	fmt.Println("      --cc               string   Comma-separated emails or file path for CC")
 	fmt.Println("      --bcc              string   Comma-separated emails or file path for BCC")
 	fmt.Println()
@@ -157,6 +165,9 @@ func ParseFlags() CLIArgs {
 	pflag.StringSliceVarP(&args.Attachments, "attach", "a", []string{}, "File attachments (repeat flag to add multiple)")
 	pflag.StringSliceVar(&args.Embeds, "embed", []string{}, "Inline image paths shown in the HTML body (repeat flag to add multiple); reference as cid:embed1, cid:embed2, ...")
 	pflag.StringVar(&args.SignaturePath, "signature", "", "Plain-text signature file appended below the email body (auto-detects UTF-8/GBK)")
+	pflag.StringVar(&args.TaskbookPath, "taskbook", "", "Excel task table (任务表.xlsx): schedule each 时间 group daily")
+	pflag.StringVar(&args.TaskbookTemplate, "taskbook-template", "", "Generate a fillable task-table template at this path and exit")
+	pflag.StringVar(&args.TaskbookOnce, "taskbook-once", "", "Send only the batch for this HH:MM from the task table and exit")
 	pflag.StringVar(&args.To, "to", "", "Email address for single-recipient sending (mutually exclusive with --csv or --sheet-url)")
 	pflag.StringVar(&args.Text, "text", "", "Inline plain-text body or path to a .txt file (mutually exclusive with --template)")
 	pflag.StringVarP(&args.WebhookURL, "webhook", "w", "", "HTTP URL to send POST request with campaign results")
