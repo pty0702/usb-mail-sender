@@ -1,10 +1,12 @@
 package taskbook
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"html"
+	"html/template"
 	"log"
 	"os"
 	"path/filepath"
@@ -20,11 +22,11 @@ import (
 // Scheduler watches the task spreadsheet once a minute and delivers each
 // due time-group through the regular mailgrid dispatch pipeline.
 type Scheduler struct {
-	TaskbookPath string           // path to 任务表.xlsx
-	TemplatePath string           // base HTML template (Hi {{.name}} + {{.body}} + signature)
-	Subject      string           // email subject for taskbook sends
-	GlobalCC     []string         // fixed CC for every taskbook email
-	FixedEmbeds  []string         // signature images, referenced as cid:embed1..N
+	TaskbookPath string   // path to 任务表.xlsx
+	TemplatePath string   // base HTML template (Hi {{.name}} + {{.body}} + signature)
+	Subject      string   // email subject for taskbook sends
+	GlobalCC     []string // fixed CC for every taskbook email
+	FixedEmbeds  []string // signature images, referenced as cid:embed1..N
 	SMTP         config.SMTPConfig
 	statePath    string
 	state        map[string]map[string]bool // date -> "HH:MM" -> sent
@@ -161,14 +163,29 @@ func (s *Scheduler) sendBatch(rows []TaskRow, key string) {
 			}
 		}
 
+		// The task body is pre-escaped, trusted HTML (buildBody); render it
+		// through html/template with template.HTML so {{.body}} is inserted
+		// verbatim while {{.name}} stays escaped against injection.
+		tmpl, err := utils.LoadTemplate(s.TemplatePath)
+		if err != nil {
+			log.Printf("[任务表] 第 %d 行模板加载失败，已跳过 (%v)", row.RowNum, err)
+			continue
+		}
+		var rendered bytes.Buffer
+		renderData := map[string]any{
+			"email": row.Email,
+			"name":  row.Name,
+			"body":  template.HTML(bodyHTML),
+		}
+		if err := tmpl.Execute(&rendered, renderData); err != nil {
+			log.Printf("[任务表] 第 %d 行模板渲染失败，已跳过 (%v)", row.RowNum, err)
+			continue
+		}
+		body := rendered.String()
+
 		rec := parser.Recipient{
 			Email: row.Email,
 			Data:  map[string]string{"name": row.Name, "body": bodyHTML},
-		}
-		body, err := utils.RenderTemplate(rec, s.TemplatePath)
-		if err != nil {
-			log.Printf("[任务表] 第 %d 行模板渲染失败，已跳过 (%v)", row.RowNum, err)
-			continue
 		}
 
 		tasks = append(tasks, email.Task{
