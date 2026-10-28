@@ -307,7 +307,7 @@ namespace MailSenderGui
                 Height = 48,
                 Padding = new Padding(8, 8, 0, 0),
             };
-            startBtn = MakeButton("▶ 启动每日定时", StartClicked);
+            startBtn = MakeButton("▶ 启动定时发送", StartClicked);
             stopBtn = MakeButton("■ 停止", StopClicked); stopBtn.Enabled = false;
             tplBtn = MakeButton("生成任务表范本", TemplateClicked);
             openBtn = MakeButton("打开任务表", OpenClicked);
