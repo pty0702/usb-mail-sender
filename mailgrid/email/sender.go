@@ -214,7 +214,19 @@ func SendWithClient(client *smtp.Client, cfg config.SMTPConfig, task Task, cache
 	}
 
 	// Headers in fixed order — stable for tests and DKIM canonicalization.
-	if err = writeHeader(bw, "From", "Mailgrid <"+from+">"); err != nil {
+	// From header: configurable display name (RFC 2047 encoded when
+	// non-ASCII), falling back to the bare address when unset.
+	fromHeader := from
+	if name := strings.TrimSpace(cfg.FromName); name != "" {
+		display := name
+		if !isASCII(display) {
+			display = mime.BEncoding.Encode("UTF-8", display)
+		} else if strings.ContainsAny(display, "\"(),.:;<>@[]\\") {
+			display = "\"" + strings.ReplaceAll(display, "\"", "\\\"") + "\""
+		}
+		fromHeader = display + " <" + from + ">"
+	}
+	if err = writeHeader(bw, "From", fromHeader); err != nil {
 		return fmt.Errorf("write From: %w", err)
 	}
 	if err = writeHeader(bw, "To", to); err != nil {

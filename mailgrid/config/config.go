@@ -13,6 +13,7 @@ type SMTPConfig struct {
 	Username    string `json:"username"`
 	Password    string `json:"password"`
 	From        string `json:"from"`
+	FromName    string `json:"from_name,omitempty"` // 发件人显示名（收件箱里看到的发件人名字）；留空则只显示邮箱地址
 	UseSSL      bool   `json:"ssl,omitempty"`            // Implicit TLS from the first byte (e.g. port 465); when false, STARTTLS is used if offered
 	TLSCertFile string `json:"tls_cert_file,omitempty"` // Path to custom CA certificate
 	TLSKeyFile  string `json:"tls_key_file,omitempty"`  // Path to client certificate
