@@ -258,7 +258,7 @@ namespace MailSenderGui
         TextBox logBox;
         Button startBtn, stopBtn, tplBtn, openBtn, testBtn;
         Label statusLabel;
-        TextBox subjectBox, ccBox;
+        TextBox subjectBox, ccBox, fromNameBox;
 
         string ExeDir { get { return AppDomain.CurrentDomain.BaseDirectory; } }
         string Mailgrid { get { return Path.Combine(ExeDir, "mailgrid.exe"); } }
@@ -291,15 +291,24 @@ namespace MailSenderGui
             var cfg = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 66,
+                Height = 100,
                 Padding = new Padding(8, 4, 0, 0),
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
             };
-            cfg.Controls.Add(new Label { Text = "邮件主题：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
-            subjectBox = new TextBox { Width = 180, Text = "TEST 2026" };
-            cfg.Controls.Add(subjectBox);
-            cfg.Controls.Add(new Label { Text = "  每封固定抄送：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
+            var row1 = new FlowLayoutPanel { Width = 730, Height = 34 };
+            row1.Controls.Add(new Label { Text = "邮件主题：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
+            subjectBox = new TextBox { Width = 170, Text = "TEST 2026" };
+            row1.Controls.Add(subjectBox);
+            row1.Controls.Add(new Label { Text = "  发件人名称（收件人看到的发件人名字）：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
+            fromNameBox = new TextBox { Width = 170, Text = LoadFromName() };
+            row1.Controls.Add(fromNameBox);
+            cfg.Controls.Add(row1);
+            var row2 = new FlowLayoutPanel { Width = 730, Height = 34 };
+            row2.Controls.Add(new Label { Text = "每封固定抄送：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
             ccBox = new TextBox { Width = 330, Text = "sue@pak-eco.com,1430404507@qq.com" };
-            cfg.Controls.Add(ccBox);
+            row2.Controls.Add(ccBox);
+            cfg.Controls.Add(row2);
 
             var buttons = new FlowLayoutPanel
             {
@@ -352,10 +361,48 @@ namespace MailSenderGui
             logBox.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + line + Environment.NewLine);
         }
 
+        // 把界面上的发件人名称写回 smtp.json（mailgrid 启动时读取该文件生效）。
+        void SaveFromName()
+        {
+            try
+            {
+                string path = Path.Combine(ExeDir, "smtp.json");
+                if (!File.Exists(path)) return;
+                var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
+                var obj = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Encoding.UTF8));
+                if (obj == null) return;
+                var smtp = obj.ContainsKey("smtp") ? obj["smtp"] as Dictionary<string, object> : null;
+                if (smtp == null) { smtp = new Dictionary<string, object>(); obj["smtp"] = smtp; }
+                smtp["from_name"] = fromNameBox.Text.Trim();
+                File.WriteAllText(path, ser.Serialize(obj), new UTF8Encoding(false));
+            }
+            catch (Exception ex) { AppendLog("发件人名称未能写回配置: " + ex.Message); }
+        }
+
+        string LoadFromName()
+        {
+            try
+            {
+                string path = Path.Combine(ExeDir, "smtp.json");
+                if (!File.Exists(path)) return "Pak2Eco";
+                var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
+                var obj = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Encoding.UTF8));
+                var smtp = obj == null ? null : obj.ContainsKey("smtp") ? obj["smtp"] as Dictionary<string, object> : null;
+                if (smtp != null && smtp.ContainsKey("from_name"))
+                {
+                    string v = smtp["from_name"] as string;
+                    if (!string.IsNullOrEmpty(v)) return v;
+                }
+            }
+            catch { }
+            return "Pak2Eco";
+        }
+
         void StartClicked(object sender, EventArgs e)
         {
             if (worker != null && !worker.HasExited) return;
             if (!File.Exists(Mailgrid)) { Warn("找不到 mailgrid.exe，请把它和本程序放在同一文件夹。"); return; }
+            SaveFromName();
             if (!File.Exists(Taskbook)) { Warn("还没有任务表：请先点「生成任务表范本」，填写后保存为 任务表.xlsx。"); return; }
 
             var psi = new ProcessStartInfo
@@ -444,6 +491,7 @@ namespace MailSenderGui
         void TestClicked(object sender, EventArgs e)
         {
             if (!File.Exists(Taskbook)) { Warn("还没有任务表，请先点「生成任务表范本」。"); return; }
+            SaveFromName();
             string time = Prompt.Show("要立即发送任务表里几点的那一批？（如 08:00）", "立即测试", "08:00");
             if (time == null) return;
             time = time.Trim();
