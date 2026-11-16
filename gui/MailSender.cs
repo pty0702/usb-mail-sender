@@ -258,7 +258,10 @@ namespace MailSenderGui
         TextBox logBox;
         Button startBtn, stopBtn, tplBtn, openBtn, testBtn;
         Label statusLabel;
-        TextBox subjectBox, ccBox, fromNameBox, mailBox, pwdBox;
+        TextBox subjectBox, ccBox, fromNameBox, pwdBox;
+        ComboBox mailCombo;
+        List<Dictionary<string, string>> accounts;
+        int activeIndex;
 
         string ExeDir { get { return AppDomain.CurrentDomain.BaseDirectory; } }
         string Mailgrid { get { return Path.Combine(ExeDir, "mailgrid.exe"); } }
@@ -269,7 +272,7 @@ namespace MailSenderGui
         {
             Text = "客户邮件定时发送器 by 西塔 | ptyo7o2";
             Font = new Font("微软雅黑", 9F);
-            Size = new Size(760, 600);
+            Size = new Size(760, 668);
             StartPosition = FormStartPosition.CenterScreen;
             FormClosing += OnClosing;
 
@@ -291,7 +294,7 @@ namespace MailSenderGui
             var cfg = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 100,
+                Height = 168,
                 Padding = new Padding(8, 4, 0, 0),
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
@@ -311,13 +314,23 @@ namespace MailSenderGui
             cfg.Controls.Add(row2);
             var row3 = new FlowLayoutPanel { Width = 730, Height = 34 };
             row3.Controls.Add(new Label { Text = "邮箱账号（腾讯企业邮箱）：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
-            string[] acct = LoadMailAccount();
-            mailBox = new TextBox { Width = 220, Text = acct[0] };
-            row3.Controls.Add(mailBox);
-            row3.Controls.Add(new Label { Text = "  客户端专用密码：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
-            pwdBox = new TextBox { Width = 200, Text = acct[1], PasswordChar = '●' };
-            row3.Controls.Add(pwdBox);
+            LoadAccountsFile();
+            mailCombo = new ComboBox { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Consolas", 9F) };
+            RefreshAccountCombo();
+            mailCombo.SelectedIndexChanged += delegate { ApplyActiveAccount(); };
+            row3.Controls.Add(mailCombo);
+            var addBtn = new Button { Text = "＋添加账号", Width = 92, Height = 27 };
+            addBtn.Click += delegate { AddAccountClicked(); };
+            row3.Controls.Add(addBtn);
+            var delBtn = new Button { Text = "删除", Width = 52, Height = 27 };
+            delBtn.Click += delegate { DeleteAccountClicked(); };
+            row3.Controls.Add(delBtn);
             cfg.Controls.Add(row3);
+            var row4 = new FlowLayoutPanel { Width = 730, Height = 34 };
+            row4.Controls.Add(new Label { Text = "客户端专用密码（选中账号的授权码，可修改）：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
+            pwdBox = new TextBox { Width = 330, PasswordChar = '●' };
+            row4.Controls.Add(pwdBox);
+            cfg.Controls.Add(row4);
 
             var buttons = new FlowLayoutPanel
             {
@@ -407,7 +420,57 @@ namespace MailSenderGui
             return "Pak2Eco";
         }
 
-        // 读 smtp.json 里的邮箱账号/授权码，填入界面（腾讯企业邮箱场景 from 与账号相同）。
+        // ===== 发件账号簿（发件账号.json）：多账号保存、下拉切换 =====
+
+        string AccountsPath { get { return Path.Combine(ExeDir, "发件账号.json"); } }
+
+        // 读取账号簿；文件不存在时从 smtp.json 迁移现有账号，保证老用户无感升级。
+        void LoadAccountsFile()
+        {
+            accounts = new List<Dictionary<string, string>>();
+            activeIndex = 0;
+            try
+            {
+                if (File.Exists(AccountsPath))
+                {
+                    var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
+                    var obj = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(AccountsPath, Encoding.UTF8));
+                    if (obj != null)
+                    {
+                        object aObj = null, listObj = null;
+                        if (obj.TryGetValue("active", out aObj)) int.TryParse(aObj.ToString(), out activeIndex);
+                        if (obj.TryGetValue("accounts", out listObj))
+                        {
+                            var arr = listObj as System.Collections.ArrayList;
+                            if (arr != null)
+                            foreach (object item in arr)
+                            {
+                                var d = item as Dictionary<string, object>;
+                                if (d == null) continue;
+                                var row = new Dictionary<string, string>();
+                                foreach (string k in new[] { "display", "email", "password" })
+                                    row[k] = d.ContainsKey(k) && d[k] != null ? d[k].ToString() : "";
+                                if (!string.IsNullOrEmpty(row["email"]))
+                                    accounts.Add(row);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { AppendLog("账号簿读取失败: " + ex.Message); }
+
+            if (accounts.Count == 0)
+            {
+                // 从 smtp.json 迁移现有账号（老版本升级路径）。
+                string[] legacy = LoadMailAccount();
+                if (legacy[0] != "")
+                    accounts.Add(new Dictionary<string, string> {
+                        { "display", LoadFromName() }, { "email", legacy[0] }, { "password", legacy[1] } });
+            }
+            if (activeIndex >= accounts.Count) activeIndex = 0;
+        }
+
+        // 读 smtp.json 里的邮箱账号/授权码（老版本升级迁移用）。
         string[] LoadMailAccount()
         {
             try
@@ -424,23 +487,92 @@ namespace MailSenderGui
             catch { return new[] { "", "" }; }
         }
 
-        // 把界面上的邮箱账号/授权码写回 smtp.json（from 跟随账号）。
-        // 返回 true 表示可以继续启动；输入不完整时提示并阻止。
-        bool SaveMailAccount()
+        void SaveAccountsFile()
         {
-            string acct = mailBox.Text.Trim();
+            var list = new List<Dictionary<string, object>>();
+            foreach (var a in accounts)
+                list.Add(new Dictionary<string, object> {
+                    { "display", a.ContainsKey("display") ? a["display"] : "" },
+                    { "email", a.ContainsKey("email") ? a["email"] : "" },
+                    { "password", a.ContainsKey("password") ? a["password"] : "" },
+                });
+            var obj = new Dictionary<string, object> { { "accounts", list }, { "active", activeIndex } };
+            var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
+            File.WriteAllText(AccountsPath, ser.Serialize(obj), new UTF8Encoding(false));
+        }
+
+        void RefreshAccountCombo()
+        {
+            mailCombo.Items.Clear();
+            foreach (var a in accounts)
+                mailCombo.Items.Add(string.IsNullOrEmpty(a["display"]) ? a["email"] : a["display"] + "（" + a["email"] + "）");
+            if (accounts.Count > 0)
+            {
+                if (activeIndex >= accounts.Count) activeIndex = 0;
+                mailCombo.SelectedIndex = activeIndex;
+            }
+            else
+            {
+                ApplyActiveAccount();
+            }
+        }
+
+        // 选中账号变化：把该账号的授权码与显示名带出到输入框。
+        void ApplyActiveAccount()
+        {
+            activeIndex = mailCombo.SelectedIndex < 0 ? 0 : mailCombo.SelectedIndex;
+            if (activeIndex >= accounts.Count) { pwdBox.Text = ""; return; }
+            var a = accounts[activeIndex];
+            pwdBox.Text = a.ContainsKey("password") ? a["password"] : "";
+            fromNameBox.Text = a.ContainsKey("display") ? a["display"] : "";
+        }
+
+        void AddAccountClicked()
+        {
+            var r = AccountPrompt.Show();
+            if (r == null) return;
+            if (!r["email"].Contains("@")) { Warn("邮箱地址需要是完整格式，例如 sales@pak-eco.com。"); return; }
+            foreach (var a in accounts)
+                if (a["email"].Equals(r["email"], StringComparison.OrdinalIgnoreCase))
+                { Warn("这个邮箱已经在账号簿里了。"); return; }
+            accounts.Add(r);
+            activeIndex = accounts.Count - 1;
+            SaveAccountsFile();
+            RefreshAccountCombo();
+            AppendLog("已添加发件账号：" + r["email"]);
+        }
+
+        void DeleteAccountClicked()
+        {
+            if (accounts.Count == 0) return;
+            var a = accounts[activeIndex];
+            if (MessageBox.Show("确定从账号簿删除 " + a["email"] + " 吗？", "确认删除",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            accounts.RemoveAt(activeIndex);
+            activeIndex = 0;
+            SaveAccountsFile();
+            RefreshAccountCombo();
+            AppendLog("已删除发件账号：" + a["email"]);
+        }
+
+        // 把当前选中账号（含界面可能改过的授权码/显示名）写回 smtp.json，供 mailgrid 使用。
+        // 返回 true 表示可以继续启动；输入不完整时提示并阻止。
+        bool SaveActiveAccount()
+        {
+            if (accounts.Count == 0) { Warn("请先点「＋添加账号」填写发件邮箱和授权码。"); return false; }
+            if (activeIndex >= accounts.Count) activeIndex = 0;
+            var a = accounts[activeIndex];
+            string email = a["email"];
             string pwd = pwdBox.Text;
-            if (acct == "" && pwd == "") return true; // 两项都空：沿用配置文件原值
-            if (acct == "" || pwd == "")
+            string display = fromNameBox.Text.Trim();
+            if (pwd == "")
             {
-                Warn("邮箱账号和客户端专用密码要一起填写（或都留空以沿用现有配置）。");
+                Warn("客户端专用密码不能为空（见随包说明：网页版邮箱里生成，不是登录密码）。");
                 return false;
             }
-            if (!acct.Contains("@"))
-            {
-                Warn("邮箱账号需要是完整地址，例如 sales@pak-eco.com。");
-                return false;
-            }
+            a["password"] = pwd;
+            a["display"] = display;
+            SaveAccountsFile();
             try
             {
                 string path = Path.Combine(ExeDir, "smtp.json");
@@ -450,9 +582,10 @@ namespace MailSenderGui
                 if (obj == null) { Warn("smtp.json 格式异常，无法保存。"); return false; }
                 var smtp = obj.ContainsKey("smtp") ? obj["smtp"] as Dictionary<string, object> : null;
                 if (smtp == null) { smtp = new Dictionary<string, object>(); obj["smtp"] = smtp; }
-                smtp["username"] = acct;
+                smtp["username"] = email;
                 smtp["password"] = pwd;
-                smtp["from"] = acct;
+                smtp["from"] = email;
+                smtp["from_name"] = display;
                 File.WriteAllText(path, ser.Serialize(obj), new UTF8Encoding(false));
                 return true;
             }
@@ -466,8 +599,7 @@ namespace MailSenderGui
         void StartClicked(object sender, EventArgs e)
         {
             if (worker != null && !worker.HasExited) return;
-            SaveFromName();
-            if (!SaveMailAccount()) return;
+            if (!SaveActiveAccount()) return;
             if (!File.Exists(Mailgrid)) { Warn("找不到 mailgrid.exe，请把它和本程序放在同一文件夹。"); return; }
             SaveFromName();
             if (!File.Exists(Taskbook)) { Warn("还没有任务表：请先点「生成任务表范本」，填写后保存为 任务表.xlsx。"); return; }
@@ -558,8 +690,8 @@ namespace MailSenderGui
         void TestClicked(object sender, EventArgs e)
         {
             if (!File.Exists(Taskbook)) { Warn("还没有任务表，请先点「生成任务表范本」。"); return; }
+            if (!SaveActiveAccount()) return;
             SaveFromName();
-            if (!SaveMailAccount()) return;
             string time = Prompt.Show("要立即发送任务表里几点的那一批？（如 08:00）", "立即测试", "08:00");
             if (time == null) return;
             time = time.Trim();
@@ -673,3 +805,52 @@ namespace MailSenderGui
         }
     }
 }
+
+    // 添加发件账号的小窗口：显示名 / 邮箱地址 / 客户端专用密码。
+    public static class AccountPrompt
+    {
+        public static Dictionary<string, string> Show()
+        {
+            Dictionary<string, string> result = null;
+            var t = new Thread(() =>
+            {
+                var form = new Form
+                {
+                    Text = "添加发件账号",
+                    Width = 420,
+                    Height = 240,
+                    FormBorderStyle = FormBorderStyle.FixedDialog,
+                    StartPosition = FormStartPosition.CenterParent,
+                    MaximizeBox = false, MinimizeBox = false,
+                    Font = new Font("微软雅黑", 9F),
+                };
+                var l1 = new Label { Text = "发件人名称（收件人看到的名字）：", Left = 16, Top = 14, Width = 370 };
+                var t1 = new TextBox { Left = 16, Top = 38, Width = 370 };
+                var l2 = new Label { Text = "邮箱账号：", Left = 16, Top = 68, Width = 370 };
+                var t2 = new TextBox { Left = 16, Top = 92, Width = 370 };
+                var l3 = new Label { Text = "客户端专用密码（网页版邮箱里生成）：", Left = 16, Top = 122, Width = 370 };
+                var t3 = new TextBox { Left = 16, Top = 146, Width = 370 };
+                var ok = new Button { Text = "保存", DialogResult = DialogResult.OK, Left = 210, Top = 180, Width = 80 };
+                var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Left = 300, Top = 180, Width = 80 };
+                form.Controls.Add(l1); form.Controls.Add(t1);
+                form.Controls.Add(l2); form.Controls.Add(t2);
+                form.Controls.Add(l3); form.Controls.Add(t3);
+                form.Controls.Add(ok); form.Controls.Add(cancel);
+                form.AcceptButton = ok;
+                form.CancelButton = cancel;
+                if (form.ShowDialog() == DialogResult.OK)
+                {
+                    if (t2.Text.Trim() == "") { MessageBox.Show("邮箱账号不能为空。"); result = null; return; }
+                    result = new Dictionary<string, string> {
+                        { "display", t1.Text.Trim() },
+                        { "email", t2.Text.Trim() },
+                        { "password", t3.Text },
+                    };
+                }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            return result;
+        }
+    }
