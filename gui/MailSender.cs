@@ -258,7 +258,7 @@ namespace MailSenderGui
         TextBox logBox;
         Button startBtn, stopBtn, tplBtn, openBtn, testBtn;
         Label statusLabel;
-        TextBox subjectBox, ccBox, fromNameBox;
+        TextBox subjectBox, ccBox, fromNameBox, mailBox, pwdBox;
 
         string ExeDir { get { return AppDomain.CurrentDomain.BaseDirectory; } }
         string Mailgrid { get { return Path.Combine(ExeDir, "mailgrid.exe"); } }
@@ -269,7 +269,7 @@ namespace MailSenderGui
         {
             Text = "客户邮件定时发送器 by 西塔 | ptyo7o2";
             Font = new Font("微软雅黑", 9F);
-            Size = new Size(760, 560);
+            Size = new Size(760, 600);
             StartPosition = FormStartPosition.CenterScreen;
             FormClosing += OnClosing;
 
@@ -309,6 +309,15 @@ namespace MailSenderGui
             ccBox = new TextBox { Width = 330, Text = "sue@pak-eco.com,1430404507@qq.com" };
             row2.Controls.Add(ccBox);
             cfg.Controls.Add(row2);
+            var row3 = new FlowLayoutPanel { Width = 730, Height = 34 };
+            row3.Controls.Add(new Label { Text = "邮箱账号（腾讯企业邮箱）：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
+            string[] acct = LoadMailAccount();
+            mailBox = new TextBox { Width = 220, Text = acct[0] };
+            row3.Controls.Add(mailBox);
+            row3.Controls.Add(new Label { Text = "  客户端专用密码：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
+            pwdBox = new TextBox { Width = 200, Text = acct[1], PasswordChar = '●' };
+            row3.Controls.Add(pwdBox);
+            cfg.Controls.Add(row3);
 
             var buttons = new FlowLayoutPanel
             {
@@ -398,9 +407,67 @@ namespace MailSenderGui
             return "Pak2Eco";
         }
 
+        // 读 smtp.json 里的邮箱账号/授权码，填入界面（腾讯企业邮箱场景 from 与账号相同）。
+        string[] LoadMailAccount()
+        {
+            try
+            {
+                string path = Path.Combine(ExeDir, "smtp.json");
+                if (!File.Exists(path)) return new[] { "", "" };
+                var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
+                var obj = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Encoding.UTF8));
+                var smtp = obj == null ? null : obj.ContainsKey("smtp") ? obj["smtp"] as Dictionary<string, object> : null;
+                string user = smtp != null && smtp.ContainsKey("username") ? smtp["username"] as string : null;
+                string pass = smtp != null && smtp.ContainsKey("password") ? smtp["password"] as string : null;
+                return new[] { user ?? "", pass ?? "" };
+            }
+            catch { return new[] { "", "" }; }
+        }
+
+        // 把界面上的邮箱账号/授权码写回 smtp.json（from 跟随账号）。
+        // 返回 true 表示可以继续启动；输入不完整时提示并阻止。
+        bool SaveMailAccount()
+        {
+            string acct = mailBox.Text.Trim();
+            string pwd = pwdBox.Text;
+            if (acct == "" && pwd == "") return true; // 两项都空：沿用配置文件原值
+            if (acct == "" || pwd == "")
+            {
+                Warn("邮箱账号和客户端专用密码要一起填写（或都留空以沿用现有配置）。");
+                return false;
+            }
+            if (!acct.Contains("@"))
+            {
+                Warn("邮箱账号需要是完整地址，例如 sales@pak-eco.com。");
+                return false;
+            }
+            try
+            {
+                string path = Path.Combine(ExeDir, "smtp.json");
+                if (!File.Exists(path)) { Warn("找不到 smtp.json，无法保存邮箱配置。"); return false; }
+                var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
+                var obj = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Encoding.UTF8));
+                if (obj == null) { Warn("smtp.json 格式异常，无法保存。"); return false; }
+                var smtp = obj.ContainsKey("smtp") ? obj["smtp"] as Dictionary<string, object> : null;
+                if (smtp == null) { smtp = new Dictionary<string, object>(); obj["smtp"] = smtp; }
+                smtp["username"] = acct;
+                smtp["password"] = pwd;
+                smtp["from"] = acct;
+                File.WriteAllText(path, ser.Serialize(obj), new UTF8Encoding(false));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Warn("邮箱配置未能保存: " + ex.Message);
+                return false;
+            }
+        }
+
         void StartClicked(object sender, EventArgs e)
         {
             if (worker != null && !worker.HasExited) return;
+            SaveFromName();
+            if (!SaveMailAccount()) return;
             if (!File.Exists(Mailgrid)) { Warn("找不到 mailgrid.exe，请把它和本程序放在同一文件夹。"); return; }
             SaveFromName();
             if (!File.Exists(Taskbook)) { Warn("还没有任务表：请先点「生成任务表范本」，填写后保存为 任务表.xlsx。"); return; }
@@ -492,6 +559,7 @@ namespace MailSenderGui
         {
             if (!File.Exists(Taskbook)) { Warn("还没有任务表，请先点「生成任务表范本」。"); return; }
             SaveFromName();
+            if (!SaveMailAccount()) return;
             string time = Prompt.Show("要立即发送任务表里几点的那一批？（如 08:00）", "立即测试", "08:00");
             if (time == null) return;
             time = time.Trim();
