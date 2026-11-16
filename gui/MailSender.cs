@@ -518,8 +518,11 @@ namespace MailSenderGui
         }
 
         // 选中账号变化：把该账号的授权码与显示名带出到输入框。
+        // 构造期控件尚未创建（pwdBox/fromNameBox 为 null）时直接跳过，
+        // 避免 RefreshAccountCombo 先于 row4 创建导致的空指针崩溃。
         void ApplyActiveAccount()
         {
+            if (pwdBox == null || fromNameBox == null) return;
             activeIndex = mailCombo.SelectedIndex < 0 ? 0 : mailCombo.SelectedIndex;
             if (activeIndex >= accounts.Count) { pwdBox.Text = ""; return; }
             var a = accounts[activeIndex];
