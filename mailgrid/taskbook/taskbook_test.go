@@ -1,22 +1,44 @@
 package taskbook
 
 import (
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/xuri/excelize/v2"
 )
 
-func TestNormalizeTime(t *testing.T) {
-	cases := map[string]string{
-		"08:00": "08:00", "8:00": "08:00", "8：30": "08:30",
-		"14:05": "14:05", " 9:5 ": "", "abc": "", "25:00": "25:00",
+func TestParseWhen(t *testing.T) {
+	year := fmt.Sprintf("%d", time.Now().Year())
+	cases := []struct {
+		in   string
+		date string
+		hm   string
+		ok   bool
+	}{
+		{"08:00", "", "08:00", true},
+		{"8:00", "", "08:00", true},
+		{"8：30", "", "08:30", true},
+		{"14:05", "", "14:05", true},
+		{" 9:5 ", "", "", false},
+		{"abc", "", "", false},
+		{"25:00", "", "", false},
+		{"如 08:00 的提示文字", "", "", false},
+		{"2026-11-20 09:00", "2026-11-20", "09:00", true},
+		{"2026-11-20  09:00", "2026-11-20", "09:00", true},
+		{"11-20 09:00", year + "-11-20", "09:00", true},
+		{"2026-2-3 7:05", "2026-02-03", "07:05", true},
+		{"2026-13-01 09:00", "", "", false},
+		{"2026-02-30 09:00", "", "", false},
+		{"13-40 09:00", "", "", false},
+		{"09:00:30", "", "", false},
 	}
-	for in, want := range cases {
-		got, _ := normalizeTime(in)
-		if got != want {
-			t.Errorf("normalizeTime(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		date, hm, ok := parseWhen(c.in)
+		if ok != c.ok || hm != c.hm || (ok && date != c.date) {
+			t.Errorf("parseWhen(%q) = (%q, %q, %v), want (%q, %q, %v)", c.in, date, hm, ok, c.date, c.hm, c.ok)
 		}
 	}
 }

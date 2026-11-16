@@ -33,6 +33,7 @@ type Scheduler struct {
 	SMTP                config.SMTPConfig
 	statePath           string
 	state               map[string]string // lowercase email -> "2006-01-02 15:04" send time
+	seenExpired         map[string]bool   // "date time email" rows already logged as expired
 	completionAnnounced bool
 }
 
@@ -49,6 +50,7 @@ func NewScheduler(taskbookPath, templatePath, subject string, globalCC, fixedEmb
 		SMTP:         smtp,
 		statePath:    filepath.Join(filepath.Dir(taskbookPath), "任务表.state.json"),
 		state:        map[string]string{},
+		seenExpired:  map[string]bool{},
 	}
 	if raw, err := os.ReadFile(s.statePath); err == nil {
 		_ = json.Unmarshal(raw, &s.state)
@@ -77,6 +79,30 @@ func (s *Scheduler) isSent(email string) bool {
 	return ok
 }
 
+func isExpired(t TaskRow, today, hm string) bool {
+	if t.Date == "" {
+		return false
+	}
+	if t.Date < today {
+		return true
+	}
+	return t.Date == today && t.Time < hm
+}
+
+// noteExpired logs an overdue row once; later ticks stay quiet about it.
+func (s *Scheduler) noteExpired(t TaskRow, today string) {
+	k := t.Date + " " + t.Time + " " + strings.ToLower(t.Email)
+	if s.seenExpired[k] {
+		return
+	}
+	s.seenExpired[k] = true
+	when := t.Time
+	if t.Date != today {
+		when = t.Date + " " + t.Time
+	}
+	log.Printf("[任务表] 第 %d 行（%s → %s）已过期，自动跳过不补发", t.RowNum, when, t.Email)
+}
+
 // Run blocks until ctx is cancelled or every row of the spreadsheet has been
 // sent (auto-stop). Re-reading the file each tick means customers can edit it
 // live; once every customer is in the ledger the scheduler shuts down so a
@@ -90,7 +116,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			log.Printf("[任务表] %v", err)
 		}
 		if done {
-			log.Printf("[任务表] ✅ 任务表中的客户已全部发送完毕，调度自动停止。")
+			log.Printf("[任务表] ✅ 任务表中的客户已全部发送完毕（或已过期），调度自动停止。")
 			log.Printf("[任务表] 给新客户发送：请在任务表里填入新客户并保存，然后重新点「启动」。")
 			return nil
 		}
@@ -105,7 +131,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 }
 
 // tick returns done=true when the spreadsheet is non-empty and every customer
-// in it has already been sent.
+// in it has either been sent or expired.
 func (s *Scheduler) tick(now time.Time) (bool, error) {
 	tasks, notes, err := Parse(s.TaskbookPath)
 	if err != nil {
@@ -118,15 +144,20 @@ func (s *Scheduler) tick(now time.Time) (bool, error) {
 		return false, nil
 	}
 
-	key := now.Format("15:04")
+	today, hm := now.Format("2006-01-02"), now.Format("15:04")
 	var due []TaskRow
 	pending := 0
 	for _, t := range tasks {
 		if s.isSent(t.Email) {
 			continue // 永久去重：发过的客户绝不再发
 		}
+		if isExpired(t, today, hm) {
+			s.noteExpired(t, today)
+			continue // 过期不补发
+		}
 		pending++
-		if t.Time == key {
+		dueHit := (t.Date == "" && t.Time == hm) || (t.Date == today && t.Time == hm)
+		if dueHit {
 			due = append(due, t)
 		}
 	}
@@ -141,16 +172,17 @@ func (s *Scheduler) tick(now time.Time) (bool, error) {
 	if len(due) == 0 {
 		return false, nil
 	}
-	s.sendBatch(due, key)
+	s.sendBatch(due, hm)
 	return false, nil
 }
 
-// RunBatch sends the batch for the given HH:MM right now (the "立即测试" path).
-// Already-sent customers inside the batch are skipped and reported.
+// RunBatch sends the batch for the given time right now (the "立即测试" path).
+// Accepts "08:00" or a dated form like "11-20 09:00". Already-sent customers
+// inside the batch are skipped and reported.
 func (s *Scheduler) RunBatch(timeStr string) error {
-	t, ok := normalizeTime(timeStr)
+	date, hm, ok := parseWhen(timeStr)
 	if !ok {
-		return fmt.Errorf("时间格式应为 HH:MM，如 08:00（收到 %q）", timeStr)
+		return fmt.Errorf("时间格式应为 HH:MM 或 日期+时间（如 08:00、11-20 09:00、2026-11-20 09:00；收到 %q）", timeStr)
 	}
 	tasks, notes, err := Parse(s.TaskbookPath)
 	if err != nil {
@@ -160,25 +192,38 @@ func (s *Scheduler) RunBatch(timeStr string) error {
 		log.Printf("[任务表] %s", n)
 	}
 	var due []TaskRow
-	skipped := 0
+	skippedSent, skippedExpired := 0, 0
+	today := time.Now().Format("2006-01-02")
 	for _, row := range tasks {
-		if row.Time != t {
+		if row.Date != date || row.Time != hm {
+			continue
+		}
+		if isExpired(row, today, hm) {
+			skippedExpired++
 			continue
 		}
 		if s.isSent(row.Email) {
-			skipped++
+			skippedSent++
 			log.Printf("[任务表] 跳过 %s：该客户此前已发送（每个客户只发一次）", row.Email)
 			continue
 		}
 		due = append(due, row)
 	}
-	if len(due) == 0 {
-		if skipped > 0 {
-			return fmt.Errorf("%s 批次的客户此前均已发送过（每个客户只发一次）；如需重发请删除 任务表.state.json 后重试", t)
-		}
-		return fmt.Errorf("任务表里没有 %s 的任务", t)
+	label := hm
+	if date != "" {
+		label = date + " " + hm
 	}
-	s.sendBatch(due, t)
+	if len(due) == 0 {
+		switch {
+		case skippedExpired > 0:
+			return fmt.Errorf("%s 的任务已过期，自动跳过不补发", label)
+		case skippedSent > 0:
+			return fmt.Errorf("%s 批次的客户此前均已发送过（每个客户只发一次）；如需重发请删除 任务表.state.json 后重试", label)
+		default:
+			return fmt.Errorf("任务表里没有 %s 的任务", label)
+		}
+	}
+	s.sendBatch(due, label)
 	return nil
 }
 

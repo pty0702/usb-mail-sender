@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/bravo1goingdark/mailgrid/parser"
 	"github.com/xuri/excelize/v2"
@@ -14,7 +15,8 @@ import (
 
 // TaskRow is one row of the task spreadsheet: one recipient, one send.
 type TaskRow struct {
-	Time   string // "HH:MM" local time, matched every day
+	Time   string // "HH:MM" local time
+	Date   string // "2006-01-02" for one-shot scheduling; empty = every day
 	Name   string
 	Email  string
 	CC     string // optional, comma-separated
@@ -34,21 +36,78 @@ var headerAliases = map[string]string{
 	"image": "image", "配图": "image", "图片": "image",
 }
 
-var timeRe = regexp.MustCompile(`^\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*$`)
+var (
+	hmRe     = regexp.MustCompile(`^\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*$`)
+	fullRe   = regexp.MustCompile(`^\s*(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2})\s*[:：]\s*(\d{2})\s*$`)
+	mdRe     = regexp.MustCompile(`^\s*(\d{1,2})-(\d{1,2})\s+(\d{1,2})\s*[:：]\s*(\d{2})\s*$`)
+	sepSpace = regexp.MustCompile(`\s+`)
+)
+
+// pad2 prefixes a single digit with zero ("8" -> "08").
+func pad2(s string) string {
+	if len(s) == 1 {
+		return "0" + s
+	}
+	return s
+}
+
+// validHM checks hour<=23 and minute<=59 on an "HH:MM" string.
+func validHM(hm string) bool {
+	return hm[:2] <= "23" && hm[3:] <= "59"
+}
+
+// validDate verifies a "2006-01-02" string is a real calendar date.
+func validDate(date string) bool {
+	_, err := time.Parse("2006-01-02", date)
+	return err == nil
+}
 
 // normalizeTime accepts a cell that is exactly a time ("8:00", "08：30") and
 // rejects prose cells — hint text containing examples like "如 08:00" must not
 // be mistaken for a send time.
 func normalizeTime(cell string) (string, bool) {
-	m := timeRe.FindStringSubmatch(cell)
+	m := hmRe.FindStringSubmatch(cell)
 	if m == nil {
 		return "", false
 	}
-	h, mm := m[1], m[2]
-	if len(h) == 1 {
-		h = "0" + h
+	hm := pad2(m[1]) + ":" + m[2]
+	if !validHM(hm) {
+		return "", false
 	}
-	return h + ":" + mm, true
+	return hm, true
+}
+
+// parseWhen accepts three spellings for the 时间 column and returns
+// (date, "HH:MM", ok). An empty date means "every day".
+//
+//	"08:00"                -> ("", "08:00")      every day
+//	"11-20 09:00"          -> ("2006-11-20", …)  this year, one shot
+//	"2026-11-20 09:00"     -> ("2026-11-20", …)  explicit date, one shot
+func parseWhen(cell string) (string, string, bool) {
+	cell = sepSpace.ReplaceAllString(strings.TrimSpace(cell), " ")
+	if hm, ok := normalizeTime(cell); ok {
+		return "", hm, true
+	}
+	if m := fullRe.FindStringSubmatch(cell); m != nil {
+		date := m[1] + "-" + pad2(m[2]) + "-" + pad2(m[3])
+		hm := pad2(m[4]) + ":" + m[5]
+		if !validDate(date) || !validHM(hm) {
+			return "", "", false
+		}
+		return date, hm, true
+	}
+	if m := mdRe.FindStringSubmatch(cell); m != nil {
+		date := fmt.Sprintf("%d-%s-%s", time.Now().Year(), pad2(m[1]), pad2(m[2]))
+		if !validDate(date) {
+			return "", "", false
+		}
+		hm := pad2(m[3]) + ":" + m[4]
+		if !validHM(hm) {
+			return "", "", false
+		}
+		return date, hm, true
+	}
+	return "", "", false
 }
 
 // Parse reads the first worksheet of the task spreadsheet. The first non-empty
@@ -113,7 +172,7 @@ func Parse(path string) ([]TaskRow, []string, error) {
 			continue // blank separator row
 		}
 		rowNum := i + 1
-		t, timeOK := normalizeTime(cell(row, "time"))
+		date, hm, timeOK := parseWhen(cell(row, "time"))
 		// Hint rows from the generated template (grey instructions under the
 		// header) have neither a valid time nor a valid email — skip silently
 		// so customers never see warnings about the template itself.
@@ -125,15 +184,12 @@ func Parse(path string) ([]TaskRow, []string, error) {
 			continue
 		}
 		if !timeOK {
-			notes = append(notes, fmt.Sprintf("第 %d 行时间无法识别（应为 HH:MM，如 08:00），已跳过", rowNum))
-			continue
-		}
-		if h, m := t[:2], t[3:]; h > "23" || m > "59" {
-			notes = append(notes, fmt.Sprintf("第 %d 行时间超出范围: %s，已跳过", rowNum, t))
+			notes = append(notes, fmt.Sprintf("第 %d 行时间无法识别（应为 HH:MM，或带日期如 2026-11-20 09:00），已跳过", rowNum))
 			continue
 		}
 		tasks = append(tasks, TaskRow{
-			Time:   t,
+			Time:   hm,
+			Date:   date,
 			Name:   cell(row, "name"),
 			Email:  email,
 			CC:     cell(row, "cc"),
@@ -158,7 +214,7 @@ func WriteTemplate(path string) error {
 
 	headers := []string{"时间", "客户名字", "客户邮箱", "抄送邮箱", "正文内容", "配图"}
 	hints := []string{
-		"几点发，如 08:00（每天到这个时间自动发）",
+		"发送时间：每天发填 08:00；指定日期发填 2026-11-20 09:00 或 11-20 09:00",
 		"客户称呼，程序自动填进开头的「Hi 名字,」",
 		"客户邮箱（必填）",
 		"抄送邮箱，可留空；多人用英文逗号隔开",
@@ -201,7 +257,7 @@ func WriteTemplate(path string) error {
 	}); err == nil {
 		f.SetCellStyle(sheet, "A2", "F2", style)
 	}
-	widths := []float64{10, 14, 26, 22, 60, 16}
+	widths := []float64{22, 14, 26, 22, 60, 16}
 	for i, w := range widths {
 		colName, _ := excelize.ColumnNumberToName(i + 1)
 		f.SetColWidth(sheet, colName, colName, w)
@@ -210,15 +266,19 @@ func WriteTemplate(path string) error {
 	// Instruction sheet, same content spirit as the customer's original
 	// requirement table (正文1~正文6).
 	const info = "任务表填写说明\n\n" +
-		"1. 时间：每天几点发送，格式 HH:MM（如 08:00、14:30）。同一时间的多行客户会在到点时一起发出，每天到点都会重复发送。\n" +
+		"1. 时间：两种写法。\n" +
+		"   a) 只写几点（如 08:00）——每天到这个点检查发送；由于每个客户只发一次，实际每个客户只会收到一次。\n" +
+		"   b) 写日期+时间（如 2026-11-20 09:00 或 11-20 09:00）——只在那一时刻发送，适合提前把一周的计划一次排完。\n" +
+		"   同一时间的多行客户会在到点时一起发出。已过期的日期会自动跳过（不补发）。\n" +
 		"2. 客户名字：写客户称呼（如 David、王经理），程序自动拼成邮件开头的「Hi 名字,」（Hi 加空格、名字、英文逗号都由程序生成，正文里不用再写）。\n" +
 		"3. 客户邮箱：收件邮箱，必填，格式要正确。\n" +
 		"4. 抄送邮箱：这封邮件抄送给谁，可留空；多人用英文逗号分隔。另外每封邮件都会固定抄送软件里设置的地址。\n" +
 		"5. 正文内容：从「Hi 名字,」之后写起，可分多段（单元格内 Alt+Enter 换行）。每个客户每行正文可以不同。\n" +
 		"6. 配图：写图片文件名（如 poster.jpg），图片文件要和本软件放在同一个文件夹，可留空。图片会内嵌显示在正文底部（不是附件）。\n" +
-		"7. 签名：每封邮件末尾固定带名片签名（Best Regards / logo / 联系方式 / 徽章），内容由 template.html 中的签名区控制。\n" +
-		"8. 修改任务表后保存即可，软件一分钟内自动生效，无需重启。\n" +
-		"9. 请把本文件保存为 .xlsx 格式（WPS/Excel 另存为时选择 xlsx）。"
+		"7. 签名：每封邮件末尾固定带名片签名（Best Regards / logo / 联系方式 / 徽章），内容由 base_template.html 中的签名区控制。\n" +
+		"8. 每个客户只发一次：发送过的客户记录在 任务表.state.json，即使软件一直开着也不会重复发送；全部发完后程序自动停止。想重发请删除该文件。\n" +
+		"9. 修改任务表后保存即可，软件一分钟内自动生效，无需重启。\n" +
+		"10. 请把本文件保存为 .xlsx 格式（WPS/Excel 另存为时选择 xlsx）。"
 	f.NewSheet("填写说明")
 	f.SetCellValue("填写说明", "A1", info)
 	f.SetColWidth("填写说明", "A", "A", 110)
