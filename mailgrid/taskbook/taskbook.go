@@ -339,10 +339,14 @@ func WriteTemplate(path string) error {
 		for c, v := range row {
 			cell, _ := excelize.CoordinatesToCellName(c+1, r+3)
 			switch v {
-			case "@TOMORROW":
-				f.SetCellValue(sheet, cell, time.Now().AddDate(0, 0, 1))
-			case "@NEXTWEEK":
-				f.SetCellValue(sheet, cell, time.Now().AddDate(0, 0, 7))
+			case "@TOMORROW", "@NEXTWEEK":
+				// 归零时分秒：编辑栏只显示纯日期，避免"日期里藏着时间"的困惑。
+				d := time.Now().AddDate(0, 0, 1)
+				if v == "@NEXTWEEK" {
+					d = time.Now().AddDate(0, 0, 7)
+				}
+				d = time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, d.Location())
+				f.SetCellValue(sheet, cell, d)
 			default:
 				f.SetCellValue(sheet, cell, v)
 			}
