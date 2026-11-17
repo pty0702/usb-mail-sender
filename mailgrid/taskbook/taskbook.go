@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ type TaskRow struct {
 // English and Chinese headers are both accepted so customers can rename them.
 var headerAliases = map[string]string{
 	"time": "time", "时间": "time", "发送时间": "time",
+	"date": "date", "日期": "date", "发送日期": "date",
 	"name": "name", "客户名字": "name", "客户名称": "name", "称呼": "name",
 	"email": "email", "客户邮箱": "email", "邮箱": "email", "收件邮箱": "email",
 	"cc": "cc", "抄送邮箱": "cc", "抄送": "cc",
@@ -63,6 +65,76 @@ func validHM(hm string) bool {
 func validDate(date string) bool {
 	_, err := time.Parse("2006-01-02", date)
 	return err == nil
+}
+
+var dateTextRe = regexp.MustCompile(`^\s*(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*日?\s*$`)
+var mdTextRe = regexp.MustCompile(`^\s*(\d{1,2})\s*[-/.](\d{1,2})\s*$`)
+
+// cellRaw returns the raw (unformatted) cell value: numeric cells keep their
+// serial number so Excel-authored date/time types can be converted exactly.
+func cellRaw(f *excelize.File, sheet string, row, col int) string {
+	cell, _ := excelize.CoordinatesToCellName(col+1, row+1)
+	v, _ := f.GetCellValue(sheet, cell, excelize.Options{RawCellValue: true})
+	return v
+}
+
+// resolveDateCell accepts Excel native date cells (serial numbers), and text
+// spellings "2026-11-20", "2026/11/20", "11-20" (current year). Empty -> "".
+func resolveDateCell(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if n, err := strconv.ParseFloat(raw, 64); err == nil {
+		t, err := excelize.ExcelDateToTime(n, false)
+		if err != nil {
+			return ""
+		}
+		return t.Format("2006-01-02")
+	}
+	if m := dateTextRe.FindStringSubmatch(raw); m != nil {
+		d := m[1] + "-" + pad2(m[2]) + "-" + pad2(m[3])
+		if validDate(d) {
+			return d
+		}
+	}
+	if m := mdTextRe.FindStringSubmatch(raw); m != nil {
+		d := fmt.Sprintf("%d-%s-%s", time.Now().Year(), pad2(m[1]), pad2(m[2]))
+		if validDate(d) {
+			return d
+		}
+	}
+	return ""
+}
+
+// resolveTimeCell accepts Excel native time cells (fractional serial numbers)
+// and text "8:00". Returns ("", HH:MM, ok). A numeric cell >= 1 means a full
+// datetime typed into the time column; its time-of-day part is used.
+func resolveTimeCell(raw string) (string, string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", false
+	}
+	if n, err := strconv.ParseFloat(raw, 64); err == nil {
+		t, err := excelize.ExcelDateToTime(n, false)
+		if err != nil {
+			return "", "", false
+		}
+		hm := t.Format("15:04")
+		var date string
+		if n >= 1 {
+			date = t.Format("2006-01-02")
+		}
+		return date, hm, true
+	}
+	// 旧单列全格式文本仍兼容：单独交给 parseWhen。
+	if date, hm, ok := parseWhen(raw); ok {
+		return date, hm, true
+	}
+	if hm, ok := normalizeTime(raw); ok {
+		return "", hm, true
+	}
+	return "", "", false
 }
 
 // normalizeTime accepts a cell that is exactly a time ("8:00", "08：30") and
@@ -164,6 +236,7 @@ func Parse(path string) ([]TaskRow, []string, error) {
 		return strings.TrimSpace(row[idx])
 	}
 
+	_, hasDateCol := col["date"]
 	var (
 		tasks []TaskRow
 		notes []string
@@ -175,7 +248,22 @@ func Parse(path string) ([]TaskRow, []string, error) {
 			continue // blank separator row
 		}
 		rowNum := i + 1
-		date, hm, timeOK := parseWhen(cell(row, "time"))
+
+		var date, hm string
+		var timeOK bool
+		if hasDateCol {
+			// 双列模式：日期列留空=每天；数值单元格按 Excel 原生类型换算。
+			timeDate, thm, tok := resolveTimeCell(cellRaw(f, sheet, i, col["time"]))
+			date, hm, timeOK = resolveDateCell(cellRaw(f, sheet, i, col["date"])), thm, tok
+			if timeDate != "" && date == "" {
+				// 时间格里被 Excel 存成了完整日期时间：日期部分一并采纳。
+				date = timeDate
+			}
+		} else {
+			// 旧单列模式：文本全格式或 HH:MM。
+			date, hm, timeOK = parseWhen(cell(row, "time"))
+		}
+
 		// Hint rows from the generated template (grey instructions under the
 		// header) have neither a valid time nor a valid email — skip silently
 		// so customers never see warnings about the template itself.
@@ -187,7 +275,11 @@ func Parse(path string) ([]TaskRow, []string, error) {
 			continue
 		}
 		if !timeOK {
-			notes = append(notes, fmt.Sprintf("第 %d 行时间无法识别（应为 HH:MM，或带日期如 2026-11-20 09:00），已跳过", rowNum))
+			notes = append(notes, fmt.Sprintf("第 %d 行时间无法识别（时间列填 8:00 这类，或检查是否被 Excel 转成了别的格式），已跳过", rowNum))
+			continue
+		}
+		if date != "" && !validDate(date) {
+			notes = append(notes, fmt.Sprintf("第 %d 行日期无效: %s，已跳过", rowNum, date))
 			continue
 		}
 		tasks = append(tasks, TaskRow{
@@ -215,9 +307,10 @@ func WriteTemplate(path string) error {
 	sheet := "任务表"
 	f.SetSheetName("Sheet1", sheet)
 
-	headers := []string{"时间", "客户名字", "客户邮箱", "抄送邮箱", "正文内容", "配图"}
+	headers := []string{"日期", "时间", "客户名字", "客户邮箱", "抄送邮箱", "正文内容", "配图"}
 	hints := []string{
-		"发送时间：每天发填 08:00；指定日期发填 2026-11-20 09:00 或 11-20 09:00",
+		"哪天发：点单元格选日期（Excel 会显示日历）；每天发就留空",
+		"几点发：填 8:00 或 14:30（Excel 自动识别为时间，都正常）",
 		"客户称呼，程序自动填进开头的「Hi 名字,」",
 		"客户邮箱（必填）",
 		"抄送邮箱，可留空；多人用英文逗号隔开",
@@ -233,20 +326,35 @@ func WriteTemplate(path string) error {
 		f.SetCellValue(sheet, cell, hint)
 	}
 
+	// 示例行：第一行日期留空（=每天），第二三行用 Excel 原生日期类型。
 	examples := [][]string{
-		{"08:00", "David Lee", "david.lee@example.com", "sue@pak-eco.com",
+		{"", "08:00", "David Lee", "david.lee@example.com", "sue@pak-eco.com",
 			"PACK EXPO 2026 is coming — and we'd love to see you there!\n\nJoin Pak2Eco in Chicago and explore our latest paper packaging solutions, including Retail Packaging, Food Packaging, E-commerce Packaging, Custom Packaging, and New Insulated Bags.\n\nOct. 18–21, 2026 · McCormick Place, Chicago, IL · West Hall, Booth W-46076", "poster.jpg"},
-		{"08:00", "Sarah Chen", "sarah.chen@example.com", "",
+		{"@TOMORROW", "09:00", "Sarah Chen", "sarah.chen@example.com", "",
 			"PACK EXPO 2026 is coming — see you in Chicago!", "poster.jpg"},
-		{"09:00", "Mike Wang", "mike.wang@example.com", "",
+		{"@NEXTWEEK", "14:30", "Mike Wang", "mike.wang@example.com", "",
 			"Hi 之后的正文从这里写，想写几段写几段。", ""},
 	}
 	for r, row := range examples {
 		for c, v := range row {
 			cell, _ := excelize.CoordinatesToCellName(c+1, r+3)
-			f.SetCellValue(sheet, cell, v)
+			switch v {
+			case "@TOMORROW":
+				f.SetCellValue(sheet, cell, time.Now().AddDate(0, 0, 1))
+			case "@NEXTWEEK":
+				f.SetCellValue(sheet, cell, time.Now().AddDate(0, 0, 7))
+			default:
+				f.SetCellValue(sheet, cell, v)
+			}
 		}
 	}
+	// 日期列显示格式 yyyy/m/d，时间列 hh:mm。
+	dateCol, _ := excelize.ColumnNumberToName(1)
+	timeCol, _ := excelize.ColumnNumberToName(2)
+	dateStyle, _ := f.NewStyle(&excelize.Style{CustomNumFmt: strPtr("yyyy/m/d")})
+	timeStyle, _ := f.NewStyle(&excelize.Style{CustomNumFmt: strPtr("hh:mm")})
+	f.SetColStyle(sheet, dateCol, dateStyle)
+	f.SetColStyle(sheet, timeCol, timeStyle)
 
 	// Styling: bold header, grey hint row, usable column widths.
 	if style, err := f.NewStyle(&excelize.Style{
@@ -260,7 +368,7 @@ func WriteTemplate(path string) error {
 	}); err == nil {
 		f.SetCellStyle(sheet, "A2", "F2", style)
 	}
-	widths := []float64{22, 14, 26, 22, 60, 16}
+	widths := []float64{13, 9, 14, 26, 22, 60, 16}
 	for i, w := range widths {
 		colName, _ := excelize.ColumnNumberToName(i + 1)
 		f.SetColWidth(sheet, colName, colName, w)
@@ -269,10 +377,10 @@ func WriteTemplate(path string) error {
 	// Instruction sheet, same content spirit as the customer's original
 	// requirement table (正文1~正文6).
 	const info = "任务表填写说明\n\n" +
-		"1. 时间：两种写法。\n" +
-		"   a) 只写几点（如 08:00）——每天到这个点检查发送；由于每个客户只发一次，实际每个客户只会收到一次。\n" +
-		"   b) 写日期+时间（如 2026-11-20 09:00 或 11-20 09:00）——只在那一时刻发送，适合提前把一周的计划一次排完。\n" +
-		"   同一时间的多行客户会在到点时一起发出。已过期的日期会自动跳过（不补发）。\n" +
+		"1. 日期 + 时间 两列：\n" +
+		"   日期列：点单元格直接选日期（Excel 显示日历）；每天发送就留空。\n" +
+		"   时间列：填 8:00 或 14:30，Excel 会自动识别成时间格式，显示成 8:00 AM 也正常。\n" +
+		"   提前把一周的计划一次排完即可，程序每天到点自动发；已过期的日期自动跳过（不补发）。\n" +
 		"2. 客户名字：写客户称呼（如 David、王经理），程序自动拼成邮件开头的「Hi 名字,」（Hi 加空格、名字、英文逗号都由程序生成，正文里不用再写）。\n" +
 		"3. 客户邮箱：收件邮箱，必填，格式要正确。\n" +
 		"4. 抄送邮箱：这封邮件抄送给谁，可留空；多人用英文逗号分隔。另外每封邮件都会固定抄送软件里设置的地址。\n" +
@@ -374,3 +482,6 @@ func ParseAny(path string) ([]TaskRow, []string, error) {
 	}
 	return Parse(path)
 }
+
+// strPtr is a tiny helper for CustomNumFmt pointers.
+func strPtr(v string) *string { return &v }

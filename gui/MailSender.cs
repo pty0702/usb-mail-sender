@@ -256,8 +256,7 @@ namespace MailSenderGui
     {
         Process worker;                 // mailgrid.exe 任务表调度进程
         TextBox logBox;
-        Button startBtn, stopBtn, addTaskBtn, delTaskBtn;
-        DataGridView taskGrid;
+        Button startBtn, stopBtn, tplBtn, openBtn;
         Label statusLabel;
         TextBox subjectBox, ccBox, fromNameBox, pwdBox;
         ComboBox mailCombo;
@@ -266,7 +265,7 @@ namespace MailSenderGui
 
         string ExeDir { get { return AppDomain.CurrentDomain.BaseDirectory; } }
         string Mailgrid { get { return Path.Combine(ExeDir, "mailgrid.exe"); } }
-        string Taskbook { get { return TasksPath; } }
+        string Taskbook { get { return Path.Combine(ExeDir, "任务表.xlsx"); } }
         string Template { get { return Path.Combine(ExeDir, "base_template.html"); } }
 
         public MainForm()
@@ -344,12 +343,12 @@ namespace MailSenderGui
             };
             startBtn = MakeButton("▶ 启动定时发送", StartClicked);
             stopBtn = MakeButton("■ 停止", StopClicked); stopBtn.Enabled = false;
-            addTaskBtn = MakeButton("➕ 添加任务", AddTaskClicked);
-            delTaskBtn = MakeButton("删除所选", DelTaskClicked);
+            tplBtn = MakeButton("生成任务表范本", TemplateClicked);
+            openBtn = MakeButton("打开任务表", OpenClicked);
             buttons.Controls.Add(startBtn);
             buttons.Controls.Add(stopBtn);
-            buttons.Controls.Add(addTaskBtn);
-            buttons.Controls.Add(delTaskBtn);
+            buttons.Controls.Add(tplBtn);
+            buttons.Controls.Add(openBtn);
 
             logBox = new TextBox
             {
@@ -361,40 +360,11 @@ namespace MailSenderGui
                 BackColor = Color.White,
             };
 
-            var split = new SplitContainer
-            {
-                Dock = DockStyle.Fill,
-                Orientation = Orientation.Horizontal,
-                SplitterDistance = 220,
-            };
-            taskGrid = new DataGridView
-            {
-                Dock = DockStyle.Fill,
-                ReadOnly = true,
-                AllowUserToAddRows = false,
-                RowHeadersVisible = false,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                MultiSelect = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                Font = new Font("微软雅黑", 9F),
-            };
-            taskGrid.Columns.Add("date", "日期");
-            taskGrid.Columns.Add("time", "时间");
-            taskGrid.Columns.Add("name", "客户名字");
-            taskGrid.Columns.Add("email", "客户邮箱");
-            taskGrid.Columns.Add("body", "正文摘要");
-            taskGrid.Columns.Add("status", "状态");
-            taskGrid.Columns["body"].FillWeight = 40;
-            taskGrid.Columns["email"].FillWeight = 25;
-            split.Panel1.Controls.Add(taskGrid);
-            split.Panel2.Controls.Add(logBox);
-
-            Controls.Add(split);
+            Controls.Add(logBox);
             Controls.Add(buttons);
             Controls.Add(cfg);
             Controls.Add(top);
-            RefreshTaskGrid();
-            AppendLog("提示：点「➕ 添加任务」排计划（日期点选、时间填数字），再点「启动定时发送」。");
+            AppendLog("提示：先点「生成任务表范本」填写时间和客户，再点「启动每日定时」。");
         }
 
         Button MakeButton(string text, EventHandler onClick)
@@ -718,13 +688,12 @@ namespace MailSenderGui
             if (!SaveActiveAccount()) return;
             if (!File.Exists(Mailgrid)) { Warn("找不到 mailgrid.exe，请把它和本程序放在同一文件夹。"); return; }
             SaveFromName();
-            if (LoadTasksFile().Count == 0) { Warn("任务列表是空的：请先点「➕ 添加任务」。"); return; }
-            RefreshTaskGrid();
+            if (!File.Exists(Taskbook)) { Warn("还没有任务表：请先点「生成任务表范本」，填写后保存为 任务表.xlsx。"); return; }
 
             var psi = new ProcessStartInfo
             {
                 FileName = Mailgrid,
-                Arguments = "--taskbook \"" + TasksPath + "\" --template \"" + Template + "\"" +
+                Arguments = "--taskbook \"" + Taskbook + "\" --template \"" + Template + "\"" +
                             " --env \"" + Path.Combine(ExeDir, "smtp.json") + "\"" +
                             " --subject \"" + subjectBox.Text.Trim() + "\"" +
                             " --cc \"" + ccBox.Text.Trim() + "\"",
@@ -775,112 +744,42 @@ namespace MailSenderGui
             startBtn.Enabled = true; stopBtn.Enabled = false;
         }
 
-        // ===== 任务清单（任务.json）：程序内管理，替代 Excel 任务表 =====
-
-        string TasksPath { get { return Path.Combine(ExeDir, "任务.json"); } }
-
-        List<Dictionary<string, string>> LoadTasksFile()
+        void TemplateClicked(object sender, EventArgs e)
         {
-            var list = new List<Dictionary<string, string>>();
             try
             {
-                if (!File.Exists(TasksPath)) return list;
-                var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
-                var obj = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(TasksPath, Encoding.UTF8));
-                if (obj == null) return list;
-                object arrObj = null;
-                if (!obj.TryGetValue("tasks", out arrObj)) return list;
-                var arr = arrObj as System.Collections.ArrayList;
-                if (arr == null) return list;
-                foreach (object item in arr)
+                var psi = new ProcessStartInfo
                 {
-                    var d = item as Dictionary<string, object>;
-                    if (d == null) continue;
-                    var row = new Dictionary<string, string>();
-                    foreach (string k in new[] { "date", "time", "name", "email", "cc", "body", "image" })
-                        row[k] = d.ContainsKey(k) && d[k] != null ? d[k].ToString() : "";
-                    if (row["email"] != "") list.Add(row);
+                    FileName = Mailgrid,
+                    Arguments = "--taskbook-template \"" + Taskbook + "\"",
+                    WorkingDirectory = ExeDir,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                using (Process.Start(psi)) { }
+                AppendLog("范本已生成：" + Taskbook);
+                if (MessageBox.Show("范本已生成，现在用 Excel/WPS 打开填写吗？\n（同一时间多行客户会一起发送，详见范本里的「填写说明」）",
+                    "生成成功", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                {
+                    OpenWithDefaultApp(Taskbook);
                 }
             }
-            catch (Exception ex) { AppendLog("任务清单读取失败: " + ex.Message); }
-            return list;
+            catch (Exception ex) { Warn("生成范本失败：" + ex.Message); }
         }
 
-        void SaveTasksFile(List<Dictionary<string, string>> tasks)
+        void OpenClicked(object sender, EventArgs e)
         {
-            var list = new List<Dictionary<string, object>>();
-            foreach (var t in tasks)
-                list.Add(new Dictionary<string, object> {
-                    { "date", t["date"] }, { "time", t["time"] }, { "name", t["name"] },
-                    { "email", t["email"] }, { "cc", t["cc"] }, { "body", t["body"] }, { "image", t["image"] },
-                });
-            var obj = new Dictionary<string, object> { { "tasks", list } };
-            var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
-            File.WriteAllText(TasksPath, ser.Serialize(obj), new UTF8Encoding(false));
+            if (!File.Exists(Taskbook)) { Warn("还没有任务表，请先点「生成任务表范本」。"); return; }
+            OpenWithDefaultApp(Taskbook);
         }
 
-        HashSet<string> LoadSentSet()
+        void stringOut(Process p, Func<string> read, Action<string> write)
         {
-            var set = new HashSet<string>();
-            try
+            new Thread(() =>
             {
-                string sp = Path.Combine(ExeDir, "任务表.state.json");
-                if (!File.Exists(sp)) return set;
-                var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
-                var obj = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(sp, Encoding.UTF8));
-                if (obj == null) return set;
-                foreach (var kv in obj) set.Add(kv.Key.ToLowerInvariant());
-            }
-            catch { }
-            return set;
-        }
-
-        void RefreshTaskGrid()
-        {
-            taskGrid.Rows.Clear();
-            var sent = LoadSentSet();
-            string todayStr = DateTime.Today.ToString("yyyy-MM-dd"), hmNow = DateTime.Now.ToString("HH:mm");
-            foreach (var t in LoadTasksFile())
-            {
-                string status;
-                if (sent.Contains(t["email"].Trim().ToLowerInvariant())) status = "已发";
-                else if (t["date"] != "" && (string.Compare(t["date"], todayStr) < 0 || (t["date"] == todayStr && string.Compare(t["time"], hmNow) < 0))) status = "已过期";
-                else status = "待发";
-                string summary = t["body"].Replace("\r", " ").Replace("\n", " ");
-                if (summary.Length > 30) summary = summary.Substring(0, 30) + "…";
-                string dateShow = t["date"] == "" ? "每天" : DateTime.Parse(t["date"]).ToString("MM-dd ddd");
-                taskGrid.Rows.Add(dateShow, t["time"], t["name"], t["email"], summary, status);
-                var cell = taskGrid.Rows[taskGrid.Rows.Count - 1].Cells["status"];
-                if (status == "已发") cell.Style.ForeColor = Color.Green;
-                else if (status == "已过期") cell.Style.ForeColor = Color.Gray;
-                else cell.Style.ForeColor = Color.DarkOrange;
-            }
-        }
-
-        void AddTaskClicked(object sender, EventArgs e)
-        {
-            var t = TaskPrompt.Show();
-            if (t == null) return;
-            var tasks = LoadTasksFile();
-            tasks.Add(t);
-            SaveTasksFile(tasks);
-            RefreshTaskGrid();
-            AppendLog("已添加任务：" + (t["date"] == "" ? "每天" : t["date"]) + " " + t["time"] + " → " + t["email"]);
-        }
-
-        void DelTaskClicked(object sender, EventArgs e)
-        {
-            if (taskGrid.CurrentRow == null) { Warn("请先在列表里选中要删除的任务。"); return; }
-            int idx = taskGrid.CurrentRow.Index;
-            var tasks = LoadTasksFile();
-            if (idx < 0 || idx >= tasks.Count) return;
-            var t = tasks[idx];
-            string msg = "确定删除这条任务吗？\n" + (t["date"] == "" ? "每天" : t["date"]) + " " + t["time"] + " → " + t["email"];
-            if (MessageBox.Show(msg, "确认删除", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            tasks.RemoveAt(idx);
-            SaveTasksFile(tasks);
-            RefreshTaskGrid();
-            AppendLog("已删除任务：" + t["email"]);
+                try { string line; while ((line = read()) != null) write(line); }
+                catch { }
+            }) { IsBackground = true }.Start();
         }
 
         void OpenWithDefaultApp(string path)
@@ -993,123 +892,6 @@ namespace MailSenderGui
                         { "password", t3.Text },
                     };
                 }
-            });
-            t.SetApartmentState(ApartmentState.STA);
-            t.Start();
-            t.Join();
-            return result;
-        }
-    }
-
-    // 添加任务弹窗：日期日历点选（勾"每天"则忽略日期）、时间两个数字框（时 08 / 分 20）。
-    public static class TaskPrompt
-    {
-        public static Dictionary<string, string> Show()
-        {
-            Dictionary<string, string> result = null;
-            var t = new Thread(() =>
-            {
-                var form = new Form
-                {
-                    Text = "添加任务",
-                    Width = 470,
-                    Height = 540,
-                    FormBorderStyle = FormBorderStyle.FixedDialog,
-                    StartPosition = FormStartPosition.CenterParent,
-                    MaximizeBox = false, MinimizeBox = false,
-                    Font = new Font("微软雅黑", 9F),
-                };
-
-                var l0 = new Label { Text = "发送日期：", Left = 16, Top = 12, Width = 90 };
-                var everyDay = new CheckBox { Text = "每天发送", Left = 260, Top = 10, Width = 100 };
-                var datePicker = new DateTimePicker
-                {
-                    Left = 16, Top = 34, Width = 220,
-                    Format = DateTimePickerFormat.Short,
-                    Value = DateTime.Today,
-                    MinDate = DateTime.Today,
-                    MaxDate = DateTime.Today.AddYears(2),
-                };
-                var l1 = new Label { Text = "时间：", Left = 16, Top = 68, Width = 50 };
-                var hourBox = new TextBox { Left = 66, Top = 64, Width = 40, Text = "08", TextAlign = HorizontalAlignment.Center };
-                var lColon = new Label { Text = "时   :", Left = 108, Top = 68, Width = 28 };
-                var minBox = new TextBox { Left = 136, Top = 64, Width = 40, Text = "00", TextAlign = HorizontalAlignment.Center };
-                var lMin = new Label { Text = "分（例：08 和 20 = 08:20）", Left = 180, Top = 68, Width = 250 };
-                everyDay.CheckedChanged += delegate { datePicker.Enabled = !everyDay.Checked; };
-
-                var l2 = new Label { Text = "客户名字（自动拼「Hi 名字,」）：", Left = 16, Top = 96, Width = 300 };
-                var nameBox = new TextBox { Left = 16, Top = 118, Width = 300 };
-                var l3 = new Label { Text = "客户邮箱（必填）：", Left = 16, Top = 144, Width = 300 };
-                var mailBox = new TextBox { Left = 16, Top = 166, Width = 300 };
-                var l4 = new Label { Text = "抄送邮箱（可留空，多人逗号隔开）：", Left = 16, Top = 192, Width = 300 };
-                var ccBox = new TextBox { Left = 16, Top = 214, Width = 300 };
-                var l5 = new Label { Text = "正文内容（从「Hi 名字,」之后写起）：", Left = 16, Top = 240, Width = 300 };
-                var bodyBox = new TextBox { Left = 16, Top = 262, Width = 430, Height = 140, Multiline = true, ScrollBars = ScrollBars.Vertical };
-                var l6 = new Label { Text = "配图文件名（如 poster.jpg，可留空）：", Left = 16, Top = 408, Width = 300 };
-                var imgBox = new TextBox { Left = 16, Top = 430, Width = 300 };
-
-                var ok = new Button { Text = "保存任务", Left = 260, Top = 466, Width = 90, Height = 30 };
-                var cancel = new Button { Text = "取消", Left = 356, Top = 466, Width = 70, Height = 30 };
-                ok.DialogResult = DialogResult.OK;
-                cancel.DialogResult = DialogResult.Cancel;
-                form.AcceptButton = ok;
-                form.CancelButton = cancel;
-
-                ok.Click += delegate
-                {
-                    string email = mailBox.Text.Trim();
-                    if (email == "" || !email.Contains("@"))
-                    {
-                        MessageBox.Show("客户邮箱必填且需完整（如 name@example.com）。", "提示");
-                        form.DialogResult = DialogResult.None;
-                        return;
-                    }
-                    int hh, mm;
-                    if (!int.TryParse(hourBox.Text.Trim(), out hh) || hh < 0 || hh > 23)
-                    {
-                        MessageBox.Show("小时请填 0-23 的数字。", "提示");
-                        form.DialogResult = DialogResult.None;
-                        return;
-                    }
-                    if (!int.TryParse(minBox.Text.Trim(), out mm) || mm < 0 || mm > 59)
-                    {
-                        MessageBox.Show("分钟请填 0-59 的数字。", "提示");
-                        form.DialogResult = DialogResult.None;
-                        return;
-                    }
-                    result = new Dictionary<string, string> {
-                        { "date", everyDay.Checked ? "" : datePicker.Value.ToString("yyyy-MM-dd") },
-                        { "time", string.Format("{0:D2}:{1:D2}", hh, mm) },
-                        { "name", nameBox.Text.Trim() },
-                        { "email", email },
-                        { "cc", ccBox.Text.Trim() },
-                        { "body", bodyBox.Text },
-                        { "image", imgBox.Text.Trim() },
-                    };
-                };
-
-                form.Controls.Add(l0);
-                form.Controls.Add(everyDay);
-                form.Controls.Add(datePicker);
-                form.Controls.Add(l1);
-                form.Controls.Add(hourBox);
-                form.Controls.Add(lColon);
-                form.Controls.Add(minBox);
-                form.Controls.Add(lMin);
-                form.Controls.Add(l2);
-                form.Controls.Add(nameBox);
-                form.Controls.Add(l3);
-                form.Controls.Add(mailBox);
-                form.Controls.Add(l4);
-                form.Controls.Add(ccBox);
-                form.Controls.Add(l5);
-                form.Controls.Add(bodyBox);
-                form.Controls.Add(l6);
-                form.Controls.Add(imgBox);
-                form.Controls.Add(ok);
-                form.Controls.Add(cancel);
-
-                form.ShowDialog();
             });
             t.SetApartmentState(ApartmentState.STA);
             t.Start();

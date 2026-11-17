@@ -3,7 +3,6 @@ package taskbook
 import (
 	"fmt"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
@@ -61,16 +60,21 @@ func TestWriteTemplateAndParse(t *testing.T) {
 		t.Fatalf("expected 3 example rows, got %d", len(tasks))
 	}
 	want := TaskRow{
-		Time: "08:00", Name: "David Lee", Email: "david.lee@example.com",
+		Date: "", Time: "08:00", Name: "David Lee", Email: "david.lee@example.com",
 		CC: "sue@pak-eco.com", RowNum: 3,
 	}
 	got := tasks[0]
-	if got.Time != want.Time || got.Name != want.Name || got.Email != want.Email ||
-		got.CC != want.CC || got.RowNum != want.RowNum {
+	if got.Date != want.Date || got.Time != want.Time || got.Name != want.Name ||
+		got.Email != want.Email || got.CC != want.CC || got.RowNum != want.RowNum {
 		t.Errorf("row0 mismatch:\n got %+v\nwant %+v", got, want)
 	}
-	if !reflect.DeepEqual(tasks[1].Time, "08:00") || tasks[2].Time != "09:00" {
-		t.Errorf("example times wrong: %s %s", tasks[1].Time, tasks[2].Time)
+	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	nextweek := time.Now().AddDate(0, 0, 7).Format("2006-01-02")
+	if tasks[1].Date != tomorrow || tasks[1].Time != "09:00" {
+		t.Errorf("row1 mismatch: got date=%s time=%s, want %s 09:00", tasks[1].Date, tasks[1].Time, tomorrow)
+	}
+	if tasks[2].Date != nextweek || tasks[2].Time != "14:30" {
+		t.Errorf("row2 mismatch: got date=%s time=%s, want %s 14:30", tasks[2].Date, tasks[2].Time, nextweek)
 	}
 	if tasks[0].Body == "" || tasks[2].Image != "" {
 		t.Errorf("example body/image columns wrong: %+v", tasks[2])
