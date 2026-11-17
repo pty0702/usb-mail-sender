@@ -133,7 +133,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // tick returns done=true when the spreadsheet is non-empty and every customer
 // in it has either been sent or expired.
 func (s *Scheduler) tick(now time.Time) (bool, error) {
-	tasks, notes, err := Parse(s.TaskbookPath)
+	tasks, notes, err := ParseAny(s.TaskbookPath)
 	if err != nil {
 		return false, err
 	}
@@ -184,7 +184,7 @@ func (s *Scheduler) RunBatch(timeStr string) error {
 	if !ok {
 		return fmt.Errorf("时间格式应为 HH:MM 或 日期+时间（如 08:00、11-20 09:00、2026-11-20 09:00；收到 %q）", timeStr)
 	}
-	tasks, notes, err := Parse(s.TaskbookPath)
+	tasks, notes, err := ParseAny(s.TaskbookPath)
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,10 @@ func (s *Scheduler) RunBatch(timeStr string) error {
 	skippedSent, skippedExpired := 0, 0
 	today := time.Now().Format("2006-01-02")
 	for _, row := range tasks {
-		if row.Date != date || row.Time != hm {
+		// 纯时间查询（如 08:00）匹配任意日期的同时间任务；
+		// 带日期查询（如 11-20 09:00）精确匹配日期+时间。
+		match := (date == "" && row.Time == hm) || (date != "" && row.Date == date && row.Time == hm)
+		if !match {
 			continue
 		}
 		if isExpired(row, today, hm) {

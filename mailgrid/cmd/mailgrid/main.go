@@ -3,7 +3,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"os"
 
 	"github.com/bravo1goingdark/mailgrid/cli"
 	"github.com/bravo1goingdark/mailgrid/logger"
@@ -40,8 +40,11 @@ func main() {
 	defer logger.FlushAndClose()
 
 	// Run the mailgrid workflow (load config, parse CSV, render/send emails)
+	// 错误直接同步写 stderr：logrus 的 writer 是异步的，Fatalf 的 os.Exit
+	// 会抢在内容刷出前退出，造成“退出码1但零输出”的静默失败。
 	if err := cli.Run(args); err != nil {
-		log.Fatalf("[ERROR] %v", err)
+		fmt.Fprintf(os.Stderr, "[ERROR] %v\n", err)
+		os.Exit(1)
 	}
 }
 

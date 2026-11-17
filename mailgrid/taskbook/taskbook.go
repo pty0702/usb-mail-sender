@@ -4,7 +4,10 @@
 package taskbook
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -287,4 +290,87 @@ func WriteTemplate(path string) error {
 		return fmt.Errorf("保存范本失败: %w", err)
 	}
 	return f.Close()
+}
+
+// TaskJSON mirrors TaskRow for the 任务.json task list (GUI-managed).
+type TaskJSON struct {
+	Date  string `json:"date"` // "2006-01-02" or "" for every day
+	Time  string `json:"time"` // "HH:MM"
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	CC    string `json:"cc,omitempty"`
+	Body  string `json:"body"`
+	Image string `json:"image,omitempty"`
+}
+
+type tasksFile struct {
+	Tasks []TaskJSON `json:"tasks"`
+}
+
+// ParseTasksJSON loads the GUI-managed 任务.json task list. Row numbers are
+// synthetic (index+1) because there is no spreadsheet anymore.
+func ParseTasksJSON(path string) ([]TaskRow, []string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("打开任务文件失败: %w", err)
+	}
+	var tf tasksFile
+	if err := json.Unmarshal(raw, &tf); err != nil {
+		return nil, nil, fmt.Errorf("任务文件格式错误: %w", err)
+	}
+	var (
+		tasks []TaskRow
+		notes []string
+	)
+	for i, t := range tf.Tasks {
+		rowNum := i + 1
+		email := strings.TrimSpace(t.Email)
+		if email == "" {
+			continue
+		}
+		if !parser.IsValidEmail(email) {
+			notes = append(notes, fmt.Sprintf("第 %d 条邮箱格式无效，已跳过: %s", rowNum, email))
+			continue
+		}
+		date, hm, ok := parseWhen(t.Date + " " + t.Time)
+		if !ok {
+			if hmOnly, ok2 := normalizeTime(t.Time); ok2 {
+				date, hm, ok = "", hmOnly, true
+			}
+		}
+		if !ok {
+			notes = append(notes, fmt.Sprintf("第 %d 条时间无法识别: %q，已跳过", rowNum, t.Time))
+			continue
+		}
+		if t.Date != "" && !validDate(t.Date) {
+			notes = append(notes, fmt.Sprintf("第 %d 条日期无效: %s，已跳过", rowNum, t.Date))
+			continue
+		}
+		if t.Date == "" {
+			date = ""
+		}
+		tasks = append(tasks, TaskRow{
+			Time:   hm,
+			Date:   date,
+			Name:   t.Name,
+			Email:  email,
+			CC:     t.CC,
+			Body:   t.Body,
+			Image:  t.Image,
+			RowNum: rowNum,
+		})
+	}
+	if len(tasks) == 0 {
+		return nil, notes, fmt.Errorf("任务列表是空的")
+	}
+	return tasks, notes, nil
+}
+
+// ParseAny dispatches by file extension: .json for the GUI task list,
+// anything else falls back to the spreadsheet parser.
+func ParseAny(path string) ([]TaskRow, []string, error) {
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		return ParseTasksJSON(path)
+	}
+	return Parse(path)
 }
