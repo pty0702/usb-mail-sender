@@ -325,6 +325,9 @@ namespace MailSenderGui
             var delBtn = new Button { Text = "删除", Width = 52, Height = 27 };
             delBtn.Click += delegate { DeleteAccountClicked(); };
             row3.Controls.Add(delBtn);
+            var testAcctBtn = new Button { Text = "✉ 测试此账号", Width = 110, Height = 27 };
+            testAcctBtn.Click += delegate { TestAccountClicked(); };
+            row3.Controls.Add(testAcctBtn);
             cfg.Controls.Add(row3);
             var row4 = new FlowLayoutPanel { Width = 730, Height = 34 };
             row4.Controls.Add(new Label { Text = "客户端专用密码（选中账号的授权码，可修改）：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
@@ -556,6 +559,88 @@ namespace MailSenderGui
             SaveAccountsFile();
             RefreshAccountCombo();
             AppendLog("已删除发件账号：" + a["email"]);
+        }
+
+        // ✉ 测试此账号：用当前选中账号给指定邮箱发一封简短测试邮件，
+        // 验证邮箱+授权码是否可用。走独立单发通道，不写任务表/防重台账。
+        void TestAccountClicked()
+        {
+            if (accounts.Count == 0) { Warn("请先点「＋添加账号」填写发件邮箱和授权码。"); return; }
+            if (!SaveActiveAccount()) return;
+            string email = accounts[activeIndex]["email"];
+
+            string to = Prompt.Show("用账号 " + email + " 发一封测试邮件到哪个邮箱？（建议填自己的邮箱）", "测试此账号", LoadTestTo());
+            if (to == null) return;
+            to = to.Trim();
+            if (to == "" || !to.Contains("@")) { Warn("收件邮箱格式不对，应类似 name@qq.com。"); return; }
+            SaveTestTo(to);
+
+            string body = "这是发件账号测试邮件。\n如果您收到此邮件，说明发件账号 " + email + " 配置有效。\n发送时间：" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            var psi = new ProcessStartInfo
+            {
+                FileName = Mailgrid,
+                Arguments = "--env \"" + Path.Combine(ExeDir, "smtp.json") + "\"" +
+                            " --to \"" + to + "\"" +
+                            " --subject \"[测试] 发件账号验证 - " + email + "\"" +
+                            " --text \"" + body.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"",
+                WorkingDirectory = ExeDir,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
+            };
+            AppendLog("正在用 " + email + " 向 " + to + " 发送测试邮件…");
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    using (var proc = Process.Start(psi))
+                    {
+                        var outThread = new Thread(() => { try { string l; while ((l = proc.StandardOutput.ReadLine()) != null) AppendLog(l); } catch { } });
+                        var errThread = new Thread(() => { try { string l; while ((l = proc.StandardError.ReadLine()) != null) AppendLog(l); } catch { } });
+                        outThread.IsBackground = true; errThread.IsBackground = true;
+                        outThread.Start(); errThread.Start();
+                        proc.WaitForExit();
+                        outThread.Join(1000); errThread.Join(1000);
+                        AppendLog(proc.ExitCode == 0
+                            ? "✅ 测试邮件已发出（" + email + " → " + to + "），请到收件箱查收；若几分钟未收到，检查垃圾箱或授权码。"
+                            : "❌ 测试发送失败（" + email + "），请看上方日志的错误信息。");
+                    }
+                }
+                catch (Exception ex) { AppendLog("测试发送异常: " + ex.Message); }
+            });
+        }
+
+        // 测试收件人记忆：存进发件账号.json 的 test_to 字段。
+        string LoadTestTo()
+        {
+            try
+            {
+                if (!File.Exists(AccountsPath)) return "";
+                var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
+                var obj = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(AccountsPath, Encoding.UTF8));
+                object v = null;
+                if (obj != null && obj.TryGetValue("test_to", out v)) return v == null ? "" : v.ToString();
+            }
+            catch { }
+            return "";
+        }
+
+        void SaveTestTo(string to)
+        {
+            try
+            {
+                var ser = new System.Web.Script.Serialization.JavaScriptSerializer();
+                Dictionary<string, object> obj = null;
+                if (File.Exists(AccountsPath))
+                    obj = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(AccountsPath, Encoding.UTF8));
+                if (obj == null) obj = new Dictionary<string, object>();
+                obj["test_to"] = to;
+                File.WriteAllText(AccountsPath, ser.Serialize(obj), new UTF8Encoding(false));
+            }
+            catch { }
         }
 
         // 把当前选中账号（含界面可能改过的授权码/显示名）写回 smtp.json，供 mailgrid 使用。
