@@ -256,7 +256,7 @@ namespace MailSenderGui
     {
         Process worker;                 // mailgrid.exe 任务表调度进程
         TextBox logBox;
-        Button startBtn, stopBtn, tplBtn, openBtn, testBtn;
+        Button startBtn, stopBtn, tplBtn, openBtn;
         Label statusLabel;
         TextBox subjectBox, ccBox, fromNameBox, pwdBox;
         ComboBox mailCombo;
@@ -331,7 +331,7 @@ namespace MailSenderGui
             cfg.Controls.Add(row3);
             var row4 = new FlowLayoutPanel { Width = 730, Height = 34 };
             row4.Controls.Add(new Label { Text = "客户端专用密码（选中账号的授权码，可修改）：", AutoSize = true, Margin = new Padding(3, 6, 0, 0) });
-            pwdBox = new TextBox { Width = 330, PasswordChar = '●' };
+            pwdBox = new TextBox { Width = 330 };
             row4.Controls.Add(pwdBox);
             cfg.Controls.Add(row4);
 
@@ -345,12 +345,10 @@ namespace MailSenderGui
             stopBtn = MakeButton("■ 停止", StopClicked); stopBtn.Enabled = false;
             tplBtn = MakeButton("生成任务表范本", TemplateClicked);
             openBtn = MakeButton("打开任务表", OpenClicked);
-            testBtn = MakeButton("立即测试发送…", TestClicked);
             buttons.Controls.Add(startBtn);
             buttons.Controls.Add(stopBtn);
             buttons.Controls.Add(tplBtn);
             buttons.Controls.Add(openBtn);
-            buttons.Controls.Add(testBtn);
 
             logBox = new TextBox
             {
@@ -773,47 +771,6 @@ namespace MailSenderGui
         {
             if (!File.Exists(Taskbook)) { Warn("还没有任务表，请先点「生成任务表范本」。"); return; }
             OpenWithDefaultApp(Taskbook);
-        }
-
-        void TestClicked(object sender, EventArgs e)
-        {
-            if (!File.Exists(Taskbook)) { Warn("还没有任务表，请先点「生成任务表范本」。"); return; }
-            if (!SaveActiveAccount()) return;
-            SaveFromName();
-            string time = Prompt.Show("要立即发送任务表里几点的那一批？（如 08:00）", "立即测试", "08:00");
-            if (time == null) return;
-            time = time.Trim();
-            if (time == "") { Warn("时间不能为空。"); return; }
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = Mailgrid,
-                Arguments = "--taskbook \"" + Taskbook + "\" --template \"" + Template + "\"" +
-                            " --env \"" + Path.Combine(ExeDir, "smtp.json") + "\"" +
-                            " --subject \"" + subjectBox.Text.Trim() + "\"" +
-                            " --cc \"" + ccBox.Text.Trim() + "\"" +
-                            " --taskbook-once \"" + time + "\"",
-                WorkingDirectory = ExeDir,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            AppendLog("立即测试：发送 " + time + " 批次…");
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    using (var p = Process.Start(psi))
-                    {
-                        stringOut(p, () => p.StandardOutput.ReadLine(), s => AppendLog(s));
-                        stringOut(p, () => p.StandardError.ReadLine(), s => AppendLog(s));
-                        p.WaitForExit();
-                        AppendLog("立即测试结束。");
-                    }
-                }
-                catch (Exception ex) { AppendLog("立即测试失败：" + ex.Message); }
-            });
         }
 
         void stringOut(Process p, Func<string> read, Action<string> write)
